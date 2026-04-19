@@ -694,15 +694,18 @@ def _slot_camera(slot: CameraSlot, w: int, h: int,
 # ── Cabecalho ─────────────────────────────────────────────────────────────────
 def _cabecalho(n_ativas: int, layout: int, win_w: int,
                usuario_nome: str = "", usuario_grupo: str = "",
-               api_online: bool = True) -> np.ndarray:
+               api_online: bool = True, hover_api: bool = False) -> np.ndarray:
     img = np.full((HDR_H, win_w, 3), (18, 18, 18), dtype=np.uint8)
     cv2.rectangle(img, (0, HDR_H - 2), (win_w, HDR_H), C_AMARELO, -1)
 
-    # Indicador de status da API (bolinha colorida)
+    # Indicador de status da API (bolinha colorida — clicável para admin)
     api_cor  = (0, 200, 60) if api_online else (0, 60, 220)
     api_txt  = "API OK" if api_online else "API OFF"
     api_tcor = (200, 255, 200) if api_online else (150, 150, 255)
     cx, cy = 175, HDR_H // 2
+    if hover_api:
+        cv2.rectangle(img, (155, 2), (265, HDR_H - 3), (40, 40, 40), -1)
+        cv2.rectangle(img, (155, 2), (265, HDR_H - 3), (70, 70, 70), 1)
     cv2.circle(img, (cx, cy), 5, api_cor, -1)
     cv2.circle(img, (cx, cy), 5, _cor_clara(api_cor, 60), 1)
     atw, ath = _txt_size(api_txt, 9)
@@ -830,7 +833,8 @@ def _montar_mosaico(slots: dict, state: dict) -> np.ndarray:
     cab     = _cabecalho(len(slots), layout, win_w,
                          state.get("usuario_nome", ""),
                          state.get("usuario_grupo", ""),
-                         api_online=state.get("api_online", True))
+                         api_online=state.get("api_online", True),
+                         hover_api=state.get("hover_api", False))
     toolbar = _toolbar(layout, hover_btn, win_w,
                        hover_act_btn=state.get("hover_act_btn", -1),
                        is_admin=(state.get("usuario_grupo") == "administrador"),
@@ -1183,6 +1187,7 @@ def rodar_mosaico(cfg_principal, sessao: dict = None, intervalo_ia: int = 3):
         "usuario_nome":  _usuario_nome,
         "usuario_grupo": _usuario_grupo,
         "api_online":    True,
+        "hover_api":     False,   # mouse sobre indicador API no cabeçalho
         # Drag & drop
         "drag_from":     None,   # slot_idx sendo arrastado
         "drag_sx":       0,      # mouse X no inicio do drag
@@ -1364,11 +1369,15 @@ def rodar_mosaico(cfg_principal, sessao: dict = None, intervalo_ia: int = 3):
                 return
             return
 
-        # Cabecalho
+        # Cabecalho — clique no indicador API abre painel (somente admin)
         if y < HDR_H:
             state["hover"]     = -1
             state["hover_btn"] = -1
+            state["hover_api"] = _admin and 155 <= x <= 265
+            if event == cv2.EVENT_LBUTTONDOWN and _admin and 155 <= x <= 265:
+                _panel_pendente[0] = "api"
             return
+        state["hover_api"] = False
 
         # Toolbar
         if y < HDR_H + TOOLBAR_H:
@@ -1530,6 +1539,9 @@ def rodar_mosaico(cfg_principal, sessao: dict = None, intervalo_ia: int = 3):
         elif nome == "perfil":
             from perfil_panel import abrir_perfil_panel
             abrir_perfil_panel(sessao)
+        elif nome == "api":
+            from api_panel import abrir_api_panel
+            abrir_api_panel(api_online=_api_online)
         gc.collect()
         # Restaura callback do mouse (Tkinter pode ter alterado foco)
         try:

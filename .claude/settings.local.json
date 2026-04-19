@@ -41,7 +41,24 @@
       "Bash(taskkill //F //IM python.exe)",
       "Bash(taskkill //F //IM python3.exe)",
       "Bash(git --version)",
-      "Bash(git config *)"
+      "Bash(git config *)",
+      "Bash(echo \"EXIT: $?\")",
+      "Bash(python main.py)",
+      "Read(//tmp/**)",
+      "Bash(tasklist)",
+      "Bash(taskkill /F /IM python.exe)",
+      "Bash(cmd *)",
+      "Bash(xargs cat *)",
+      "Bash(pkill -f \"python main.py\")",
+      "Bash(echo \"PID=$!\")",
+      "Bash(taskkill /F /IM python.exe /T)",
+      "Bash(start \"\" python main.py)",
+      "Bash(taskkill /F /IM pythonw.exe /T)",
+      "Bash(start \"\" pythonw main.py)",
+      "Bash(where pythonw *)",
+      "Bash(start \"\" \"C:/Users/PC-ROBSON/AppData/Local/Programs/Python/Python312/pythonw.exe\" main.py)",
+      "Bash(git push *)",
+      "Bash(git add *)"
     ]
   }
 }
