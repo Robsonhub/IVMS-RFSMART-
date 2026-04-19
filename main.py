@@ -40,21 +40,18 @@ def _carregar_config():
 
 
 def _pedir_config() -> bool:
-    """Abre tela de configuracao. Retorna True se o usuario salvou."""
     from setup_config import abrir_configuracao
     salvo = []
     abrir_configuracao(ao_salvar=lambda: salvo.append(True))
     return bool(salvo)
 
 
-
 def _garantir_instancia_unica():
-    """Impede que duas cópias do sistema rodem ao mesmo tempo."""
     import socket
     lock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
     try:
         lock.bind(("localhost", 47321))
-        return lock   # mantém o socket aberto enquanto o processo vive
+        return lock
     except OSError:
         import tkinter as tk
         from tkinter import messagebox
@@ -69,44 +66,21 @@ def _garantir_instancia_unica():
 
 
 def main():
-    _lock = _garantir_instancia_unica()   # trava enquanto o processo vive
+    _lock = _garantir_instancia_unica()
 
-    from connection_status import StatusConexao
+    # Garante que a chave de API existe antes de abrir o mosaico
+    if not _env_existe():
+        log.info("Configuracao nao encontrada - abrindo assistente.")
+        if not _pedir_config():
+            log.info("Configuracao cancelada. Encerrando.")
+            return
 
-    # Loop linear: config → status → monitorar
-    # Sem callbacks recursivos — cada etapa retorna um valor
-    while True:
+    cfg = _carregar_config()
+    import gc; gc.collect()
 
-        # 1. Garantir que o .env existe e tem a chave
-        if not _env_existe():
-            log.info("Configuracao nao encontrada - abrindo assistente.")
-            if not _pedir_config():
-                log.info("Configuracao cancelada. Encerrando.")
-                break
-
-        # 2. Carregar config e tentar conexao ONVIF
-        cfg = _carregar_config()
-        resultado = StatusConexao().mostrar(cfg)
-
-        if resultado[0] == "ok":
-            rtsp_uri = resultado[1]
-            log.info("URI descoberta: %s", rtsp_uri.split("@")[-1])
-            from mosaic import rodar_mosaico
-            rodar_mosaico(cfg, rtsp_uri, cfg.INTERVALO_FRAMES)
-            break
-
-        elif resultado[0] == "reconfigurar":
-            # Usuario quer corrigir os dados — volta ao inicio do loop
-            log.info("Reabrindo configuracao a pedido do usuario.")
-            if not _pedir_config():
-                log.info("Configuracao cancelada. Encerrando.")
-                break
-            # Continua o while — tenta conexao novamente com novos dados
-
-        else:
-            # Usuario fechou a janela
-            log.info("Janela fechada pelo usuario. Encerrando.")
-            break
+    log.info("Iniciando mosaico...")
+    from mosaic import rodar_mosaico
+    rodar_mosaico(cfg)
 
 
 if __name__ == "__main__":

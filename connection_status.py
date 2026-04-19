@@ -124,6 +124,12 @@ class StatusConexao:
 
         j.after(300, self._tentar)
         j.mainloop()
+        # Libera refs tkinter na thread principal para evitar Tcl_AsyncDelete
+        self._sv_status = None
+        self._sv_detalhe = None
+        self._sv_hora = None
+        self._canvas = None
+        self._j = None
         return self._resultado
 
     # ── Logica ────────────────────────────────────────────────────────────────

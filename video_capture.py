@@ -9,8 +9,9 @@ import cv2
 log = logging.getLogger(__name__)
 
 
-def _descobrir_rtsp(ip: str, porta: int, usuario: str, senha: str) -> str:
-    """Conecta via ONVIF e retorna a URI RTSP do primeiro perfil disponivel."""
+def _descobrir_rtsp(ip: str, porta: int, usuario: str, senha: str,
+                    canal: int = 1) -> str:
+    """Conecta via ONVIF e retorna a URI RTSP do canal indicado (1-based)."""
     from onvif import ONVIFCamera
 
     cam   = ONVIFCamera(ip, int(porta), usuario, senha)
@@ -20,8 +21,9 @@ def _descobrir_rtsp(ip: str, porta: int, usuario: str, senha: str) -> str:
     if not perfis:
         raise RuntimeError("Nenhum perfil de video encontrado via ONVIF.")
 
+    idx = max(0, min(canal - 1, len(perfis) - 1))
     req = media.create_type("GetStreamUri")
-    req.ProfileToken = perfis[0].token
+    req.ProfileToken = perfis[idx].token
     req.StreamSetup  = {
         "Stream":    "RTP-Unicast",
         "Transport": {"Protocol": "RTSP"},
@@ -32,6 +34,18 @@ def _descobrir_rtsp(ip: str, porta: int, usuario: str, senha: str) -> str:
     p = urlparse(uri)
     host_porta = f"{p.hostname}:{p.port}" if p.port else p.hostname
     return urlunparse(p._replace(netloc=f"{usuario}:{senha}@{host_porta}"))
+
+
+def listar_canais_onvif(ip: str, porta: int, usuario: str, senha: str) -> list:
+    """Retorna lista de nomes de perfis ONVIF disponíveis (para seleção de canal)."""
+    try:
+        from onvif import ONVIFCamera
+        cam    = ONVIFCamera(ip, int(porta), usuario, senha)
+        media  = cam.create_media_service()
+        perfis = media.GetProfiles()
+        return [getattr(p, "Name", f"Canal {i+1}") for i, p in enumerate(perfis)]
+    except Exception:
+        return []
 
 
 class VideoCapture:
