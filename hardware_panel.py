@@ -1,0 +1,500 @@
+"""Painel de Hardware — SPARTA AGENTE IA (somente admin).
+
+Mostra CPU, RAM, GPU, disco, motor de visão e alertas de capacidade.
+Atualiza automaticamente a cada 2 segundos via queue + after().
+"""
+import logging
+import os
+import queue as _queue
+import threading
+import time
+import tkinter as tk
+from datetime import datetime
+from pathlib import Path
+
+log = logging.getLogger(__name__)
+
+BG      = "#0F0F0F"
+BG_CARD = "#141414"
+BG_ROW  = "#1A1A1A"
+AMA     = "#FFD000"
+AESC    = "#B39200"
+BCOR    = "#F0F0F0"
+CINZA   = "#888888"
+CESC    = "#2A2A2A"
+VERDE   = "#3DCC7E"
+VERM    = "#FF4444"
+LARANJA = "#FF9900"
+AZUL    = "#4488CC"
+
+FONT_T  = ("Segoe UI", 11, "bold")
+FONT_L  = ("Segoe UI", 9)
+FONT_M  = ("Consolas", 9)
+FONT_B  = ("Segoe UI", 9, "bold")
+FONT_S  = ("Segoe UI", 8)
+FONT_XS = ("Segoe UI", 7)
+
+_DB_PATH  = Path("sparta_analytics.db")
+_CLIPS    = Path("clips_alertas")
+_INTERVAL = 2000  # ms entre atualizações
+
+
+def _cor_nivel(pct: float) -> str:
+    if pct >= 90:
+        return VERM
+    if pct >= 70:
+        return LARANJA
+    return VERDE
+
+
+def _fmt_bytes(b: int) -> str:
+    for u in ("B", "KB", "MB", "GB", "TB"):
+        if b < 1024:
+            return f"{b:.1f} {u}"
+        b /= 1024
+    return f"{b:.1f} PB"
+
+
+def _coletar_dados() -> dict:
+    """Coleta métricas do sistema. Roda em thread separada."""
+    dados: dict = {}
+
+    try:
+        import psutil
+
+        # ── CPU ──────────────────────────────────────────────────────────────
+        dados["cpu_pct"]   = psutil.cpu_percent(interval=0.5)
+        dados["cpu_count"] = psutil.cpu_count(logical=True)
+        dados["cpu_freq"]  = 0.0
+        freq = psutil.cpu_freq()
+        if freq:
+            dados["cpu_freq"] = freq.current
+
+        # Temperatura CPU (nem sempre disponível no Windows)
+        dados["cpu_temp"] = None
+        try:
+            temps = psutil.sensors_temperatures()
+            if temps:
+                for _, entries in temps.items():
+                    if entries:
+                        dados["cpu_temp"] = entries[0].current
+                        break
+        except Exception:
+            pass
+
+        # ── RAM ──────────────────────────────────────────────────────────────
+        mem = psutil.virtual_memory()
+        dados["ram_total"]  = mem.total
+        dados["ram_usado"]  = mem.used
+        dados["ram_pct"]    = mem.percent
+        swap = psutil.swap_memory()
+        dados["swap_total"] = swap.total
+        dados["swap_usado"] = swap.used
+        dados["swap_pct"]   = swap.percent
+
+        # ── Disco ─────────────────────────────────────────────────────────────
+        disco = psutil.disk_usage(".")
+        dados["disco_total"]  = disco.total
+        dados["disco_usado"]  = disco.used
+        dados["disco_livre"]  = disco.free
+        dados["disco_pct"]    = disco.percent
+
+        # DB e clips
+        dados["db_tamanho"]    = _DB_PATH.stat().st_size if _DB_PATH.exists() else 0
+        dados["clips_tamanho"] = sum(f.stat().st_size for f in _CLIPS.rglob("*")
+                                     if f.is_file()) if _CLIPS.exists() else 0
+
+        # ── Processos Python do sistema ────────────────────────────────────
+        pid = os.getpid()
+        proc = psutil.Process(pid)
+        dados["proc_cpu"]  = proc.cpu_percent(interval=0.1)
+        dados["proc_ram"]  = proc.memory_info().rss
+        dados["proc_threads"] = proc.num_threads()
+
+    except ImportError:
+        dados["erro_psutil"] = True
+    except Exception as exc:
+        dados["erro_psutil"] = str(exc)
+
+    # ── GPU via torch ────────────────────────────────────────────────────────
+    dados["gpu_nome"]    = None
+    dados["gpu_vram_total"] = 0
+    dados["gpu_vram_usado"] = 0
+    dados["gpu_pct"]     = None
+    dados["gpu_temp"]    = None
+    try:
+        import torch
+        if torch.cuda.is_available():
+            props = torch.cuda.get_device_properties(0)
+            dados["gpu_nome"]      = props.name
+            dados["gpu_vram_total"] = props.total_memory
+            dados["gpu_vram_usado"] = torch.cuda.memory_allocated(0)
+            # Temperatura via pynvml (opcional)
+            try:
+                import pynvml
+                pynvml.nvmlInit()
+                h = pynvml.nvmlDeviceGetHandleByIndex(0)
+                dados["gpu_temp"] = pynvml.nvmlDeviceGetTemperature(h, pynvml.NVML_TEMPERATURE_GPU)
+                util = pynvml.nvmlDeviceGetUtilizationRates(h)
+                dados["gpu_pct"]  = util.gpu
+            except Exception:
+                pass
+    except Exception:
+        pass
+
+    # ── VisionEngine ────────────────────────────────────────────────────────
+    dados["vision_tier"]    = None
+    dados["vision_device"]  = None
+    dados["vision_modelo"]  = None
+    dados["vision_cameras"] = 0
+    dados["vision_max_cam"] = 999
+    try:
+        from vision_engine import VisionEngine
+        eng = VisionEngine._instancia
+        if eng:
+            dados["vision_tier"]   = eng.tier
+            dados["vision_device"] = eng.device
+            dados["vision_modelo"] = eng._hw["modelo_yolo"]
+            dados["vision_cameras"] = len(eng._trackers)
+            dados["vision_max_cam"] = eng.max_cameras
+    except Exception:
+        pass
+
+    dados["ts"] = datetime.now().strftime("%H:%M:%S")
+    return dados
+
+
+def abrir_hardware_panel():
+    root = tk.Tk()
+    root.title("SPARTA AGENTE IA — Hardware")
+    root.configure(bg=BG)
+    root.resizable(False, False)
+    root.attributes("-topmost", True)
+    root.grab_set()
+
+    # ── Cabeçalho ─────────────────────────────────────────────────────────────
+    cab = tk.Frame(root, bg=AMA, padx=16, pady=10)
+    cab.pack(fill="x")
+    tk.Label(cab, text="Monitor de Hardware", font=FONT_T, bg=AMA, fg=BG).pack(side="left")
+    sv_ts = tk.StringVar(value="")
+    tk.Label(cab, textvariable=sv_ts, font=FONT_S, bg=AMA, fg="#666600").pack(side="right")
+
+    # ── Rodapé fixo ───────────────────────────────────────────────────────────
+    frm_rod = tk.Frame(root, bg="#111111", padx=20, pady=8)
+    frm_rod.pack(fill="x", side="bottom")
+    tk.Frame(frm_rod, bg=CESC, height=1).pack(fill="x", pady=(0, 6))
+
+    _after_id = [None]
+
+    def _fechar():
+        if _after_id[0]:
+            try:
+                root.after_cancel(_after_id[0])
+            except Exception:
+                pass
+        root.destroy()
+
+    root.protocol("WM_DELETE_WINDOW", _fechar)
+    b_fechar = tk.Label(frm_rod, text="   Fechar   ", font=FONT_B,
+                        bg=CESC, fg=BCOR, padx=14, pady=7, cursor="hand2")
+    b_fechar.bind("<Button-1>", lambda _: _fechar())
+    b_fechar.bind("<Enter>",    lambda _: b_fechar.config(bg="#555555"))
+    b_fechar.bind("<Leave>",    lambda _: b_fechar.config(bg=CESC))
+    b_fechar.pack(side="right")
+
+    sv_auto = tk.StringVar(value="● Atualizando automaticamente (2s)")
+    tk.Label(frm_rod, textvariable=sv_auto, font=FONT_XS,
+             bg="#111111", fg="#445544").pack(side="left")
+
+    # ── Corpo principal ───────────────────────────────────────────────────────
+    corpo = tk.Frame(root, bg=BG, padx=16, pady=12)
+    corpo.pack(fill="both", expand=True)
+
+    # ── Helpers de layout ─────────────────────────────────────────────────────
+    def _secao(pai, titulo: str):
+        tk.Label(pai, text=titulo, font=("Segoe UI", 8, "bold"),
+                 bg=BG, fg=AMA).pack(anchor="w", pady=(8, 3))
+
+    def _card(pai) -> tk.Frame:
+        f = tk.Frame(pai, bg=BG_ROW, padx=12, pady=8)
+        f.pack(fill="x", pady=(0, 4))
+        return f
+
+    def _linha(card, chave: str, sv: tk.StringVar,
+               sv_cor: tk.StringVar | None = None, negrito: bool = False):
+        fr = tk.Frame(card, bg=BG_ROW)
+        fr.pack(fill="x", pady=1)
+        tk.Label(fr, text=f"{chave}:", font=FONT_S, bg=BG_ROW,
+                 fg=CINZA, width=22, anchor="w").pack(side="left")
+        kw = {"textvariable": sv, "font": FONT_M if not negrito else FONT_B,
+              "bg": BG_ROW, "anchor": "w"}
+        lbl = tk.Label(fr, **kw)
+        lbl.pack(side="left", fill="x", expand=True)
+        if sv_cor is not None:
+            sv_cor._lbl = lbl  # armazena referência para atualizar fg
+
+    def _barra(pai, sv_pct: tk.DoubleVar, cor_var: list) -> tk.Canvas:
+        c = tk.Canvas(pai, bg="#1E1E1E", height=5,
+                      highlightthickness=0, relief="flat")
+        c.pack(fill="x", pady=(2, 6))
+        barra = c.create_rectangle(0, 0, 0, 5, fill=VERDE, outline="")
+        cor_var.append(barra)
+
+        def _atualizar(event=None):
+            w = c.winfo_width()
+            pct = sv_pct.get()
+            cor = _cor_nivel(pct)
+            c.coords(barra, 0, 0, int(w * pct / 100), 5)
+            c.itemconfig(barra, fill=cor)
+
+        c.bind("<Configure>", lambda _: _atualizar())
+        sv_pct.trace_add("write", lambda *_: _atualizar())
+        return c
+
+    # ────────────────────────────────────────────────────────────────────────
+    # CPU
+    # ────────────────────────────────────────────────────────────────────────
+    _secao(corpo, "PROCESSADOR (CPU)")
+    card_cpu = _card(corpo)
+    sv_cpu_pct  = tk.StringVar(value="—")
+    sv_cpu_info = tk.StringVar(value="—")
+    sv_cpu_temp = tk.StringVar(value="—")
+    pct_cpu_v   = tk.DoubleVar(value=0)
+    _barra_cpu  = []
+    _linha(card_cpu, "Uso",         sv_cpu_pct)
+    _barra(card_cpu, pct_cpu_v,     _barra_cpu)
+    _linha(card_cpu, "Núcleos/Freq", sv_cpu_info)
+    _linha(card_cpu, "Temperatura", sv_cpu_temp)
+
+    # ────────────────────────────────────────────────────────────────────────
+    # RAM
+    # ────────────────────────────────────────────────────────────────────────
+    _secao(corpo, "MEMÓRIA RAM")
+    card_ram = _card(corpo)
+    sv_ram_uso  = tk.StringVar(value="—")
+    sv_ram_swap = tk.StringVar(value="—")
+    pct_ram_v   = tk.DoubleVar(value=0)
+    _barra_ram  = []
+    _linha(card_ram, "RAM",   sv_ram_uso)
+    _barra(card_ram, pct_ram_v, _barra_ram)
+    _linha(card_ram, "Swap",  sv_ram_swap)
+
+    # ────────────────────────────────────────────────────────────────────────
+    # GPU
+    # ────────────────────────────────────────────────────────────────────────
+    _secao(corpo, "PLACA DE VÍDEO (GPU)")
+    card_gpu = _card(corpo)
+    sv_gpu_nome  = tk.StringVar(value="Detectando...")
+    sv_gpu_vram  = tk.StringVar(value="—")
+    sv_gpu_uso   = tk.StringVar(value="—")
+    sv_gpu_temp  = tk.StringVar(value="—")
+    pct_gpu_v    = tk.DoubleVar(value=0)
+    _barra_gpu   = []
+    _linha(card_gpu, "GPU",         sv_gpu_nome)
+    _linha(card_gpu, "VRAM",        sv_gpu_vram)
+    _linha(card_gpu, "Uso GPU",     sv_gpu_uso)
+    _barra(card_gpu, pct_gpu_v,     _barra_gpu)
+    _linha(card_gpu, "Temperatura", sv_gpu_temp)
+
+    # ────────────────────────────────────────────────────────────────────────
+    # Disco
+    # ────────────────────────────────────────────────────────────────────────
+    _secao(corpo, "ARMAZENAMENTO")
+    card_disco = _card(corpo)
+    sv_disco_livre = tk.StringVar(value="—")
+    sv_disco_db    = tk.StringVar(value="—")
+    sv_disco_clips = tk.StringVar(value="—")
+    pct_disco_v    = tk.DoubleVar(value=0)
+    _barra_disco   = []
+    _linha(card_disco, "Livre / Total",  sv_disco_livre)
+    _barra(card_disco, pct_disco_v,      _barra_disco)
+    _linha(card_disco, "Banco de dados", sv_disco_db)
+    _linha(card_disco, "Clips de alerta", sv_disco_clips)
+
+    # ────────────────────────────────────────────────────────────────────────
+    # Motor de Visão
+    # ────────────────────────────────────────────────────────────────────────
+    _secao(corpo, "MOTOR DE VISÃO")
+    card_vis = _card(corpo)
+    sv_vis_motor  = tk.StringVar(value="—")
+    sv_vis_device = tk.StringVar(value="—")
+    sv_vis_cams   = tk.StringVar(value="—")
+    sv_vis_rec    = tk.StringVar(value="—")
+    _linha(card_vis, "Motor / Modelo", sv_vis_motor)
+    _linha(card_vis, "Dispositivo",    sv_vis_device)
+    _linha(card_vis, "Câmeras ativas", sv_vis_cams)
+    _linha(card_vis, "Recomendação",   sv_vis_rec)
+
+    # ────────────────────────────────────────────────────────────────────────
+    # Processo SPARTA
+    # ────────────────────────────────────────────────────────────────────────
+    _secao(corpo, "PROCESSO SPARTA")
+    card_proc = _card(corpo)
+    sv_proc_cpu  = tk.StringVar(value="—")
+    sv_proc_ram  = tk.StringVar(value="—")
+    sv_proc_thr  = tk.StringVar(value="—")
+    _linha(card_proc, "CPU do processo", sv_proc_cpu)
+    _linha(card_proc, "RAM do processo", sv_proc_ram)
+    _linha(card_proc, "Threads",         sv_proc_thr)
+
+    # ── Alertas ───────────────────────────────────────────────────────────────
+    _secao(corpo, "ALERTAS DE CAPACIDADE")
+    frm_alertas = tk.Frame(corpo, bg=BG_ROW, padx=12, pady=8)
+    frm_alertas.pack(fill="x", pady=(0, 4))
+    sv_alertas = tk.StringVar(value="✔  Tudo dentro dos limites normais.")
+    lbl_alertas = tk.Label(frm_alertas, textvariable=sv_alertas,
+                           font=FONT_L, bg=BG_ROW, fg=VERDE,
+                           wraplength=440, justify="left")
+    lbl_alertas.pack(anchor="w")
+
+    # ── Queue e atualização ───────────────────────────────────────────────────
+    _q: _queue.Queue = _queue.Queue()
+
+    def _poll():
+        try:
+            while True:
+                dados = _q.get_nowait()
+                _aplicar(dados)
+        except _queue.Empty:
+            pass
+        try:
+            _after_id[0] = root.after(_INTERVAL, _coletar_async)
+        except Exception:
+            pass
+
+    def _coletar_async():
+        threading.Thread(target=lambda: _q.put(_coletar_dados()), daemon=True).start()
+        try:
+            _after_id[0] = root.after(100, _poll)
+        except Exception:
+            pass
+
+    def _aplicar(d: dict):
+        sv_ts.set(f"Atualizado: {d.get('ts', '')}")
+
+        if d.get("erro_psutil"):
+            sv_cpu_pct.set("psutil não disponível")
+            return
+
+        # CPU
+        cpu = d.get("cpu_pct", 0)
+        pct_cpu_v.set(cpu)
+        sv_cpu_pct.set(f"{cpu:.1f}%  {'⚠' if cpu >= 70 else '●'}")
+        freq = d.get("cpu_freq", 0)
+        sv_cpu_info.set(f"{d.get('cpu_count', '?')} núcleos  |  {freq:.0f} MHz")
+        temp = d.get("cpu_temp")
+        sv_cpu_temp.set(f"{temp:.0f} °C" if temp else "Não disponível")
+
+        # RAM
+        ram_pct = d.get("ram_pct", 0)
+        pct_ram_v.set(ram_pct)
+        sv_ram_uso.set(
+            f"{_fmt_bytes(d.get('ram_usado', 0))} / "
+            f"{_fmt_bytes(d.get('ram_total', 0))}  ({ram_pct:.1f}%)"
+        )
+        swap_pct = d.get("swap_pct", 0)
+        sv_ram_swap.set(
+            f"{_fmt_bytes(d.get('swap_usado', 0))} / "
+            f"{_fmt_bytes(d.get('swap_total', 0))}  ({swap_pct:.1f}%)"
+            if d.get("swap_total", 0) > 0 else "Não configurado"
+        )
+
+        # GPU
+        gpu_nome = d.get("gpu_nome")
+        if gpu_nome:
+            sv_gpu_nome.set(gpu_nome)
+            vt = d.get("gpu_vram_total", 0)
+            vu = d.get("gpu_vram_usado", 0)
+            vpct = (vu / vt * 100) if vt else 0
+            pct_gpu_v.set(vpct)
+            sv_gpu_vram.set(f"{_fmt_bytes(vu)} / {_fmt_bytes(vt)}  ({vpct:.1f}%)")
+            gpct = d.get("gpu_pct")
+            sv_gpu_uso.set(f"{gpct}%" if gpct is not None else "Indisponível")
+            gtemp = d.get("gpu_temp")
+            sv_gpu_temp.set(f"{gtemp} °C" if gtemp is not None else "Indisponível")
+        else:
+            sv_gpu_nome.set("Sem GPU NVIDIA / CUDA não disponível")
+            sv_gpu_vram.set("—")
+            sv_gpu_uso.set("—")
+            sv_gpu_temp.set("—")
+            pct_gpu_v.set(0)
+
+        # Disco
+        disco_pct = d.get("disco_pct", 0)
+        pct_disco_v.set(disco_pct)
+        sv_disco_livre.set(
+            f"{_fmt_bytes(d.get('disco_livre', 0))} livres / "
+            f"{_fmt_bytes(d.get('disco_total', 0))}  ({disco_pct:.1f}% usado)"
+        )
+        sv_disco_db.set(_fmt_bytes(d.get("db_tamanho", 0)))
+        sv_disco_clips.set(_fmt_bytes(d.get("clips_tamanho", 0)))
+
+        # Motor de visão
+        tier   = d.get("vision_tier")
+        device = d.get("vision_device", "cpu")
+        modelo = d.get("vision_modelo", "—")
+        n_cams = d.get("vision_cameras", 0)
+        max_c  = d.get("vision_max_cam", 999)
+        if tier is not None:
+            nomes = {0: "YOLOv8n (Nano)", 1: "YOLOv8s (Small)",
+                     2: "YOLOv8m (Medium)", 3: "YOLOv8l (Large)"}
+            sv_vis_motor.set(f"{nomes.get(tier, modelo)}  — Tier {tier}")
+            sv_vis_device.set(f"{'GPU (CUDA)' if device == 'cuda' else 'CPU'}")
+            sv_vis_cams.set(f"{n_cams} / {max_c} suportadas neste hardware")
+            if tier == 0 and device == "cpu":
+                sv_vis_rec.set(
+                    "GPU NVIDIA com CUDA aumentaria precisão e suporte a mais câmeras"
+                )
+            elif n_cams >= max_c * 0.8:
+                sv_vis_rec.set(
+                    f"Capacidade de GPU próxima do limite — considere upgrade"
+                )
+            else:
+                sv_vis_rec.set("Hardware adequado para a carga atual")
+        else:
+            sv_vis_motor.set("Motor não inicializado (aguardando 1ª análise)")
+            sv_vis_device.set("—")
+            sv_vis_cams.set("—")
+            sv_vis_rec.set("—")
+
+        # Processo
+        sv_proc_cpu.set(f"{d.get('proc_cpu', 0):.1f}%")
+        sv_proc_ram.set(_fmt_bytes(d.get("proc_ram", 0)))
+        sv_proc_thr.set(str(d.get("proc_threads", "—")))
+
+        # Alertas
+        alertas = []
+        if d.get("cpu_pct", 0) >= 90:
+            alertas.append("⚠  CPU acima de 90% — risco de perda de frames")
+        elif d.get("cpu_pct", 0) >= 75:
+            alertas.append("⚡  CPU acima de 75% — monitorar")
+        if d.get("ram_pct", 0) >= 90:
+            alertas.append("⚠  RAM acima de 90% — sistema pode ficar lento")
+        if d.get("disco_livre", float("inf")) < 5 * 1024**3:
+            alertas.append("⚠  Menos de 5 GB livres em disco")
+        elif d.get("disco_livre", float("inf")) < 15 * 1024**3:
+            alertas.append("⡐  Menos de 15 GB livres — considere liberar clips antigos")
+        clips_gb = d.get("clips_tamanho", 0) / 1024**3
+        if clips_gb > 10:
+            alertas.append(f"⡐  Clips ocupando {clips_gb:.1f} GB — revise e limpe")
+        gpu_nome = d.get("gpu_nome")
+        if not gpu_nome:
+            alertas.append("ℹ  Sem GPU — adicione placa NVIDIA para análise mais precisa")
+
+        if alertas:
+            sv_alertas.set("\n".join(alertas))
+            lbl_alertas.config(fg=VERM if any("⚠" in a for a in alertas) else LARANJA)
+        else:
+            sv_alertas.set("✔  Tudo dentro dos limites normais.")
+            lbl_alertas.config(fg=VERDE)
+
+    # ── Inicia coleta ─────────────────────────────────────────────────────────
+    _after_id[0] = root.after(200, _coletar_async)
+
+    root.update_idletasks()
+    w = max(root.winfo_reqwidth(), 500)
+    h = root.winfo_reqheight()
+    sw, sh = root.winfo_screenwidth(), root.winfo_screenheight()
+    root.geometry(f"{w}x{h}+{(sw-w)//2}+{(sh-h)//2}")
+    root.wait_window()
+    import gc as _gc; _gc.collect()

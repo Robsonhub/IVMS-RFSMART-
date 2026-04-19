@@ -817,6 +817,7 @@ def _toolbar(layout_atual: int, hover_btn: int, win_w: int,
         action_defs.append(("Usuarios", (30, 125, 50), (185, 255, 195)))
         action_defs.append(("Backup",   (130, 80, 20), (255, 210, 160)))
         action_defs.append(("Update",   (20, 80, 130), (160, 210, 255)))
+        action_defs.append(("Hardware", (60, 40, 120), (210, 190, 255)))
 
     rects = _toolbar_action_rects(win_w, len(action_defs))
     for i, ((label, bg, fg), (x0, y0, x1, y1)) in enumerate(zip(action_defs, rects)):
@@ -1559,6 +1560,9 @@ def rodar_mosaico(cfg_principal, sessao: dict = None, intervalo_ia: int = 3):
         elif nome == "api":
             from api_panel import abrir_api_panel
             abrir_api_panel(api_online=_api_online)
+        elif nome == "hardware":
+            from hardware_panel import abrir_hardware_panel
+            abrir_hardware_panel()
         gc.collect()
         # Restaura callback do mouse (Tkinter pode ter alterado foco)
         try:
@@ -1587,12 +1591,12 @@ def rodar_mosaico(cfg_principal, sessao: dict = None, intervalo_ia: int = 3):
                 ai = state["req_action"]
                 state["req_action"] = None
                 _acoes = ["sair", "treinar"] + (
-                    ["usuarios", "backup", "update"] if _admin else []
+                    ["usuarios", "backup", "update", "hardware"] if _admin else []
                 )
                 acao = _acoes[ai] if ai < len(_acoes) else None
                 if acao == "sair":
                     break
-                elif acao in ("treinar", "usuarios", "backup", "update"):
+                elif acao in ("treinar", "usuarios", "backup", "update", "hardware"):
                     _panel_pendente[0] = acao
 
             state["api_online"] = _api_online
