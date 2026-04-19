@@ -29,6 +29,14 @@ env/
 dist_executavel/
 PENDRIVE_*/
 
+# Backups e restaurações temporárias
+_pre_restore_*/
+_backup_pre_update_*/
+backups/
+sparta_pre_restore_*.db
+sparta_backup_*.db
+sparta_backup_*.zip
+
 # Sistema
 Thumbs.db
 .DS_Store

@@ -301,6 +301,81 @@ def buscar_exemplos_fewshot_balanceados(limite: int = 4) -> list:
     return [dict(r) for r in list(fps) + list(vps)]
 
 
+def buscar_analises_filtradas(
+    data_inicio: str | None = None,
+    data_fim: str | None = None,
+    camera_id: str | None = None,
+    nivel_risco: str | None = None,
+    apenas_alertas: bool = False,
+    limite: int = 5000,
+) -> list:
+    """Busca análises com filtros opcionais de período, câmera e nível."""
+    conn = get_connection()
+    where, params = [], []
+
+    if data_inicio:
+        where.append("timestamp_analise >= ?")
+        params.append(data_inicio)
+    if data_fim:
+        where.append("timestamp_analise <= ?")
+        params.append(data_fim + "T23:59:59" if "T" not in data_fim else data_fim)
+    if camera_id and camera_id != "todas":
+        where.append("camera_id = ?")
+        params.append(camera_id)
+    if nivel_risco and nivel_risco != "todos":
+        where.append("nivel_risco = ?")
+        params.append(nivel_risco)
+    if apenas_alertas:
+        where.append("alerta = 1")
+
+    sql = "SELECT * FROM analises"
+    if where:
+        sql += " WHERE " + " AND ".join(where)
+    sql += " ORDER BY timestamp_analise DESC LIMIT ?"
+    params.append(limite)
+    return [dict(r) for r in conn.execute(sql, params).fetchall()]
+
+
+def estatisticas_tokens(dias: int = 30) -> dict:
+    """Retorna uso de tokens agrupado por dia nos últimos N dias."""
+    conn = get_connection()
+    rows = conn.execute(
+        """SELECT date(timestamp_analise) AS dia,
+                  SUM(tokens_entrada) AS tok_in,
+                  SUM(tokens_saida)   AS tok_out,
+                  COUNT(*)            AS analises
+           FROM analises
+           WHERE timestamp_analise >= date('now', ?)
+           GROUP BY dia ORDER BY dia""",
+        (f"-{dias} days",)
+    ).fetchall()
+    return [dict(r) for r in rows]
+
+
+def tendencias(dias: int = 7) -> dict:
+    """Retorna contagem de alertas por nível e por câmera nos últimos N dias."""
+    conn = get_connection()
+    por_nivel = conn.execute(
+        """SELECT nivel_risco, COUNT(*) AS total
+           FROM analises
+           WHERE timestamp_analise >= date('now', ?) AND alerta=1
+           GROUP BY nivel_risco""",
+        (f"-{dias} days",)
+    ).fetchall()
+    por_camera = conn.execute(
+        """SELECT camera_id, COUNT(*) AS alertas
+           FROM analises
+           WHERE timestamp_analise >= date('now', ?) AND alerta=1
+           GROUP BY camera_id ORDER BY alertas DESC""",
+        (f"-{dias} days",)
+    ).fetchall()
+    return {
+        "por_nivel":  [dict(r) for r in por_nivel],
+        "por_camera": [dict(r) for r in por_camera],
+        "dias":       dias,
+    }
+
+
 def buscar_cameras_distintas() -> list:
     conn = get_connection()
     rows = conn.execute(

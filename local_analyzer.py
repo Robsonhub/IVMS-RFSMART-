@@ -30,9 +30,34 @@ THRESHOLDS_PADRAO = {
 }
 
 
+def _tentar_carregar_yolo():
+    """Tenta carregar YOLOv8n. Retorna modelo ou None."""
+    try:
+        from ultralytics import YOLO
+        modelo = YOLO("yolov8n.pt")  # baixa automaticamente na primeira execução
+        log.info("YOLO carregado — detecção aprimorada ativa")
+        return modelo
+    except Exception as exc:
+        log.debug("YOLO não disponível (%s) — usando HOG", exc)
+        return None
+
+
+_yolo_model = None
+_yolo_tentou = False
+
+
+def _get_yolo():
+    global _yolo_model, _yolo_tentou
+    if not _yolo_tentou:
+        _yolo_tentou = True
+        _yolo_model = _tentar_carregar_yolo()
+    return _yolo_model
+
+
 class AnalisadorLocal:
     """
     Detecta comportamentos suspeitos frame a frame usando OpenCV puro.
+    Usa YOLO (ultralytics) quando disponível, HOG como fallback.
     Thread-safe. Uma instância por câmera para estado independente.
     """
 
@@ -46,7 +71,7 @@ class AnalisadorLocal:
             history=500, varThreshold=40, detectShadows=True
         )
 
-        # HOG person detector (incluso no OpenCV, sem modelo externo)
+        # HOG person detector (fallback sem YOLO)
         self._hog = cv2.HOGDescriptor()
         self._hog.setSVMDetector(cv2.HOGDescriptor_getDefaultPeopleDetector())
 
@@ -106,15 +131,26 @@ class AnalisadorLocal:
         roi_tapete   = fg_bin[ty1:ty2, tx1:tx2]
         tapete_ratio = float(roi_tapete.sum()) / max(roi_tapete.size, 1)
 
-        # ── 3. Detecção de pessoas (HOG — a cada 5 frames para performance) ───
+        # ── 3. Detecção de pessoas (YOLO se disponível, HOG como fallback) ──────
         if self._frame_count % 5 == 0:
-            small  = cv2.resize(frame, (320, 240))
-            sx, sy = w / 320.0, h / 240.0
-            p_small, _ = self._hog.detectMultiScale(
-                small, winStride=(8, 8), padding=(4, 4), scale=1.05
-            )
-            pessoas = [(int(px*sx), int(py*sy), int(pw*sx), int(ph*sy))
-                       for (px, py, pw, ph) in p_small]
+            yolo = _get_yolo()
+            if yolo is not None:
+                try:
+                    results = yolo(frame, classes=[0], verbose=False, conf=0.4)
+                    pessoas = []
+                    for box in results[0].boxes:
+                        x1, y1, x2, y2 = (int(v) for v in box.xyxy[0].tolist())
+                        pessoas.append((x1, y1, x2 - x1, y2 - y1))
+                except Exception:
+                    pessoas = []
+            else:
+                small  = cv2.resize(frame, (320, 240))
+                sx, sy = w / 320.0, h / 240.0
+                p_small, _ = self._hog.detectMultiScale(
+                    small, winStride=(8, 8), padding=(4, 4), scale=1.05
+                )
+                pessoas = [(int(px*sx), int(py*sy), int(pw*sx), int(ph*sy))
+                           for (px, py, pw, ph) in p_small]
             self._historico_pessoas.append(pessoas)
         else:
             pessoas = list(self._historico_pessoas[-1]) \
@@ -217,6 +253,19 @@ class AnalisadorLocal:
             if acao == "Monitoramento normal":
                 acao = "Revisar gravacao — comportamento suspeito detectado"
 
+        objetos = []
+        for px, py, pw, ph in pessoas:
+            objetos.append({
+                "tipo": "pessoa",
+                "bbox_norm": [
+                    round(max(0.0, px / w), 3),
+                    round(max(0.0, py / h), 3),
+                    round(min(1.0, (px + pw) / w), 3),
+                    round(min(1.0, (py + ph) / h), 3),
+                ],
+                "descricao": "Pessoa detectada localmente",
+            })
+
         return {
             "alerta":                    alerta,
             "nivel_risco":               nivel,
@@ -228,5 +277,6 @@ class AnalisadorLocal:
             "confianca":                 round(confianca, 2),
             "timestamp_analise":         datetime.now(timezone.utc).isoformat(),
             "frame_id":                  frame_id,
-            "fonte":                     "local",   # distingue de "claude"
+            "objetos_detectados":        objetos,
+            "fonte":                     "local",
         }

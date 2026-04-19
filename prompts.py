@@ -38,8 +38,20 @@ Retorne SEMPRE um JSON válido, sem texto fora dele:
   "janela_revisao_segundos": número de segundos para voltar no vídeo (0 se não aplicável),
   "confianca": valor entre 0.0 e 1.0,
   "timestamp_analise": "datetime ISO 8601",
-  "frame_id": "identificador do frame recebido"
+  "frame_id": "identificador do frame recebido",
+  "objetos_detectados": [
+    {
+      "tipo": "pessoa" | "mao" | "objeto" | "outro",
+      "bbox_norm": [x1, y1, x2, y2],
+      "descricao": "descrição curta do objeto"
+    }
+  ]
 }
+
+## Instruções para objetos_detectados
+- bbox_norm: coordenadas normalizadas de 0.0 a 1.0 relativas ao frame (x1=esquerda, y1=topo, x2=direita, y2=base)
+- Identifique TODOS os objetos/pessoas visíveis no frame
+- Se não houver objetos detectáveis, retorne lista vazia: []
 
 ## Critérios de nível de risco
 - sem_risco: cena dentro do padrão esperado

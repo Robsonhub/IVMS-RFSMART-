@@ -53,14 +53,16 @@ class TrainingTab:
     def __init__(self, root: tk.Tk):
         self._root = root
         self._analise_selecionada = None
-        self._filtro_nivel  = tk.StringVar(value="todos")
-        self._filtro_camera = tk.StringVar(value="todas")
-        self._obs_var       = tk.StringVar()
+        self._filtro_nivel        = tk.StringVar(value="todos")
+        self._filtro_camera       = tk.StringVar(value="todas")
+        self._filtro_data_inicio  = tk.StringVar(value="")
+        self._filtro_data_fim     = tk.StringVar(value="")
+        self._obs_var             = tk.StringVar()
 
         root.title("SPARTA AGENTE IA — Treinamento de IA")
         root.configure(bg=BG)
-        root.geometry("1000x700")
-        root.minsize(800, 560)
+        root.geometry("1100x720")
+        root.minsize(900, 580)
 
         self._montar_cabecalho()
         self._montar_corpo()
@@ -119,6 +121,14 @@ class TrainingTab:
         self._nb.add(aba3, text="  Estatísticas  ")
         self._montar_aba_estatisticas(aba3)
 
+        aba4 = tk.Frame(self._nb, bg=BG)
+        self._nb.add(aba4, text="  Tokens  ")
+        self._montar_aba_tokens(aba4)
+
+        aba5 = tk.Frame(self._nb, bg=BG)
+        self._nb.add(aba5, text="  Tendências  ")
+        self._montar_aba_tendencias(aba5)
+
     def _montar_filtros(self, pai):
         f = tk.Frame(pai, bg=BG_CARD)
         f.pack(side="left")
@@ -126,22 +136,40 @@ class TrainingTab:
         tk.Label(f, text="FILTROS", font=("Segoe UI", 8, "bold"),
                  bg=BG_CARD, fg=AMARELO).pack(anchor="w")
 
-        row = tk.Frame(f, bg=BG_CARD)
-        row.pack(fill="x", pady=3)
+        row1 = tk.Frame(f, bg=BG_CARD)
+        row1.pack(fill="x", pady=2)
 
-        tk.Label(row, text="Nível:", font=FONT_LABEL,
+        tk.Label(row1, text="Nível:", font=FONT_LABEL,
                  bg=BG_CARD, fg=CINZA).pack(side="left")
-        ttk.Combobox(row, textvariable=self._filtro_nivel, width=12, state="readonly",
+        ttk.Combobox(row1, textvariable=self._filtro_nivel, width=11, state="readonly",
                      values=["todos", "sem_risco", "atencao", "suspeito", "critico"]
-                     ).pack(side="left", padx=(4, 14))
+                     ).pack(side="left", padx=(4, 12))
 
-        tk.Label(row, text="Câmera:", font=FONT_LABEL,
+        tk.Label(row1, text="Câmera:", font=FONT_LABEL,
                  bg=BG_CARD, fg=CINZA).pack(side="left")
-        self._cb_camera = ttk.Combobox(row, textvariable=self._filtro_camera,
-                                       width=14, state="readonly")
+        self._cb_camera = ttk.Combobox(row1, textvariable=self._filtro_camera,
+                                       width=13, state="readonly")
         self._cb_camera.pack(side="left", padx=(4, 0))
 
-        _btn(f, "  Filtrar  ", self._carregar_dados).pack(anchor="w", pady=(7, 0))
+        row2 = tk.Frame(f, bg=BG_CARD)
+        row2.pack(fill="x", pady=2)
+
+        tk.Label(row2, text="De:", font=FONT_LABEL, bg=BG_CARD, fg=CINZA).pack(side="left")
+        tk.Entry(row2, textvariable=self._filtro_data_inicio, font=FONT_MONO,
+                 bg="#242424", fg=BRANCO, insertbackground=AMARELO,
+                 relief="flat", width=11).pack(side="left", padx=(4, 8))
+        tk.Label(row2, text="Até:", font=FONT_LABEL, bg=BG_CARD, fg=CINZA).pack(side="left")
+        tk.Entry(row2, textvariable=self._filtro_data_fim, font=FONT_MONO,
+                 bg="#242424", fg=BRANCO, insertbackground=AMARELO,
+                 relief="flat", width=11).pack(side="left", padx=(4, 0))
+        tk.Label(row2, text="(AAAA-MM-DD)", font=FONT_SMALL,
+                 bg=BG_CARD, fg=CINZA).pack(side="left", padx=(6, 0))
+
+        brow = tk.Frame(f, bg=BG_CARD)
+        brow.pack(anchor="w", pady=(6, 0))
+        _btn(brow, " Filtrar ", self._carregar_dados).pack(side="left")
+        _btn(brow, " Exportar Excel ", self._exportar_excel,
+             bg=CINZA_ESC, fg=BRANCO).pack(side="left", padx=(8, 0))
 
     def _montar_estatisticas_resumidas(self, pai):
         f = tk.Frame(pai, bg=BG_CARD, padx=24)
@@ -256,12 +284,97 @@ class TrainingTab:
         tk.Label(f, textvariable=self._sv_stats_full, font=("Consolas", 10),
                  bg=BG, fg=BRANCO, justify="left").pack(anchor="w")
 
+    # ── Aba 4: Tokens ──────────────────────────────────────────────────────────
+
+    def _montar_aba_tokens(self, pai):
+        f = tk.Frame(pai, bg=BG, padx=28, pady=24)
+        f.pack(fill="both", expand=True)
+        tk.Label(f, text="USO DE TOKENS — ÚLTIMOS 30 DIAS",
+                 font=("Segoe UI", 11, "bold"), bg=BG, fg=AMARELO).pack(anchor="w", pady=(0, 12))
+        self._sv_tokens = tk.StringVar(value="Carregando...")
+        tk.Label(f, textvariable=self._sv_tokens, font=("Consolas", 9),
+                 bg=BG, fg=BRANCO, justify="left").pack(anchor="w")
+
+    def _atualizar_aba_tokens(self):
+        try:
+            dados = db.estatisticas_tokens(dias=30)
+        except Exception:
+            self._sv_tokens.set("Erro ao carregar dados de tokens.")
+            return
+
+        if not dados:
+            self._sv_tokens.set("Nenhuma análise registrada ainda.")
+            return
+
+        total_in = sum(r["tok_in"] or 0 for r in dados)
+        total_out = sum(r["tok_out"] or 0 for r in dados)
+        custo_estimado = (total_in * 15 + total_out * 75) / 1_000_000  # Opus pricing
+
+        linhas = [
+            f"{'DIA':<12}  {'ANÁLISES':>8}  {'TOK ENTRADA':>12}  {'TOK SAÍDA':>10}",
+            "─" * 50,
+        ]
+        for r in dados[-15:]:  # últimas 15 linhas
+            linhas.append(
+                f"{r['dia']:<12}  {r['analises']:>8}  {r['tok_in'] or 0:>12,}  {r['tok_out'] or 0:>10,}"
+            )
+        linhas += [
+            "─" * 50,
+            f"{'TOTAL':<12}  {'':>8}  {total_in:>12,}  {total_out:>10,}",
+            "",
+            f"Custo estimado (30d): US$ {custo_estimado:.4f}",
+            f"  (entrada: ${total_in*15/1_000_000:.4f}  |  saída: ${total_out*75/1_000_000:.4f})",
+        ]
+        self._sv_tokens.set("\n".join(linhas))
+
+    # ── Aba 5: Tendências ──────────────────────────────────────────────────────
+
+    def _montar_aba_tendencias(self, pai):
+        f = tk.Frame(pai, bg=BG, padx=28, pady=24)
+        f.pack(fill="both", expand=True)
+        tk.Label(f, text="TENDÊNCIAS DE ALERTAS — ÚLTIMOS 7 DIAS",
+                 font=("Segoe UI", 11, "bold"), bg=BG, fg=AMARELO).pack(anchor="w", pady=(0, 12))
+        self._sv_tendencias = tk.StringVar(value="Carregando...")
+        tk.Label(f, textvariable=self._sv_tendencias, font=("Consolas", 9),
+                 bg=BG, fg=BRANCO, justify="left").pack(anchor="w")
+
     # ── Lógica ────────────────────────────────────────────────────────────────
 
+    def _exportar_excel(self):
+        from tkinter import filedialog, messagebox
+        import threading
+
+        def _gerar():
+            try:
+                import report_generator
+                destino = filedialog.asksaveasfilename(
+                    defaultextension=".xlsx",
+                    filetypes=[("Excel", "*.xlsx")],
+                    title="Salvar relatório Excel",
+                )
+                if not destino:
+                    return
+                caminho = report_generator.gerar_excel_do_db(
+                    data_inicio=self._filtro_data_inicio.get().strip() or None,
+                    data_fim=self._filtro_data_fim.get().strip() or None,
+                    camera_id=self._filtro_camera.get() if self._filtro_camera.get() != "todas" else None,
+                    destino=destino,
+                )
+                self._root.after(0, lambda: messagebox.showinfo(
+                    "Exportação concluída",
+                    f"Relatório salvo em:\n{caminho}",
+                ))
+            except Exception as exc:
+                self._root.after(0, lambda: messagebox.showerror("Erro", str(exc)))
+
+        threading.Thread(target=_gerar, daemon=True).start()
+
     def _carregar_dados(self):
-        analises = db.buscar_analises(
+        analises = db.buscar_analises_filtradas(
             nivel_risco=self._filtro_nivel.get(),
             camera_id=self._filtro_camera.get(),
+            data_inicio=self._filtro_data_inicio.get().strip() or None,
+            data_fim=self._filtro_data_fim.get().strip() or None,
             limite=300,
         )
 
@@ -285,6 +398,8 @@ class TrainingTab:
 
         self._atualizar_estatisticas()
         self._atualizar_perguntas()
+        self._atualizar_aba_tokens()
+        self._atualizar_tendencias()
 
     def _mapa_feedbacks(self) -> dict:
         conn = db.get_connection()
@@ -410,6 +525,33 @@ class TrainingTab:
                      lambda pid=p["id"], r=op: self._responder_pergunta(pid, r),
                      bg=CINZA_ESC, fg=BRANCO).pack(side="left", padx=(0, 6))
 
+    def _atualizar_tendencias(self):
+        try:
+            t = db.tendencias(dias=7)
+        except Exception:
+            self._sv_tendencias.set("Erro ao carregar tendências.")
+            return
+
+        linhas = [f"Período: últimos {t['dias']} dias\n"]
+
+        linhas.append("ALERTAS POR NÍVEL:")
+        if t["por_nivel"]:
+            for r in t["por_nivel"]:
+                bar = "█" * min(r["total"], 40)
+                linhas.append(f"  {r['nivel_risco'].upper():<10} {r['total']:>5}  {bar}")
+        else:
+            linhas.append("  Nenhum alerta no período.")
+
+        linhas.append("\nALERTAS POR CÂMERA:")
+        if t["por_camera"]:
+            for r in t["por_camera"]:
+                bar = "█" * min(r["alertas"], 40)
+                linhas.append(f"  {r['camera_id']:<16} {r['alertas']:>5}  {bar}")
+        else:
+            linhas.append("  Nenhum alerta no período.")
+
+        self._sv_tendencias.set("\n".join(linhas))
+
     def _responder_pergunta(self, pergunta_id: int, resposta: str):
         threading.Thread(
             target=lambda: db.responder_pergunta(pergunta_id, resposta),
@@ -423,7 +565,8 @@ class TrainingTab:
 def abrir_training():
     root = tk.Tk()
     TrainingTab(root)
-    root.mainloop()
+    root.wait_window(root)
+    import gc as _gc; _gc.collect()
 
 
 if __name__ == "__main__":
