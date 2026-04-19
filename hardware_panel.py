@@ -164,13 +164,52 @@ def _coletar_dados() -> dict:
     return dados
 
 
+# Referência global — mantém a janela viva sem wait_window()
+_janela: tk.Tk | None = None
+
+
+def janela_aberta() -> bool:
+    """Retorna True se o painel ainda está visível."""
+    global _janela
+    if _janela is None:
+        return False
+    try:
+        return _janela.winfo_exists()
+    except Exception:
+        _janela = None
+        return False
+
+
+def atualizar_janela():
+    """Chama update() na janela aberta — chamado pelo loop principal do OpenCV."""
+    global _janela
+    if _janela is None:
+        return
+    try:
+        _janela.update()
+    except Exception:
+        _janela = None
+
+
 def abrir_hardware_panel():
+    global _janela
+    # Se já estiver aberta, traz para frente
+    if janela_aberta():
+        try:
+            _janela.lift()
+            _janela.focus_force()
+        except Exception:
+            pass
+        return
+
     root = tk.Tk()
+    _janela = root
     root.title("SPARTA AGENTE IA — Hardware")
     root.configure(bg=BG)
-    root.resizable(False, False)
+    root.resizable(True, True)
+    root.minsize(480, 400)
     root.attributes("-topmost", True)
-    root.grab_set()
+    # SEM grab_set() — painel não-modal para câmera continuar exibindo
 
     # ── Cabeçalho ─────────────────────────────────────────────────────────────
     cab = tk.Frame(root, bg=AMA, padx=16, pady=10)
@@ -187,12 +226,15 @@ def abrir_hardware_panel():
     _after_id = [None]
 
     def _fechar():
+        global _janela
         if _after_id[0]:
             try:
                 root.after_cancel(_after_id[0])
             except Exception:
                 pass
+        _janela = None
         root.destroy()
+        import gc as _gc; _gc.collect()
 
     root.protocol("WM_DELETE_WINDOW", _fechar)
     b_fechar = tk.Label(frm_rod, text="   Fechar   ", font=FONT_B,
@@ -206,9 +248,34 @@ def abrir_hardware_panel():
     tk.Label(frm_rod, textvariable=sv_auto, font=FONT_XS,
              bg="#111111", fg="#445544").pack(side="left")
 
-    # ── Corpo principal ───────────────────────────────────────────────────────
-    corpo = tk.Frame(root, bg=BG, padx=16, pady=12)
-    corpo.pack(fill="both", expand=True)
+    # ── Corpo com rolagem ─────────────────────────────────────────────────────
+    frm_scroll = tk.Frame(root, bg=BG)
+    frm_scroll.pack(fill="both", expand=True)
+
+    canvas_scroll = tk.Canvas(frm_scroll, bg=BG, highlightthickness=0)
+    scrollbar = tk.Scrollbar(frm_scroll, orient="vertical",
+                             command=canvas_scroll.yview)
+    canvas_scroll.configure(yscrollcommand=scrollbar.set)
+    scrollbar.pack(side="right", fill="y")
+    canvas_scroll.pack(side="left", fill="both", expand=True)
+
+    corpo = tk.Frame(canvas_scroll, bg=BG, padx=16, pady=12)
+    _corpo_win = canvas_scroll.create_window((0, 0), window=corpo, anchor="nw")
+
+    def _on_corpo_configure(event=None):
+        canvas_scroll.configure(scrollregion=canvas_scroll.bbox("all"))
+        canvas_scroll.itemconfig(_corpo_win, width=canvas_scroll.winfo_width())
+
+    corpo.bind("<Configure>", _on_corpo_configure)
+    canvas_scroll.bind("<Configure>", _on_corpo_configure)
+
+    def _on_mousewheel(event):
+        canvas_scroll.yview_scroll(int(-1 * (event.delta / 120)), "units")
+
+    # bind apenas no canvas e no frame — não usar bind_all (captura eventos globalmente)
+    canvas_scroll.bind("<MouseWheel>", _on_mousewheel)
+    corpo.bind("<MouseWheel>", _on_mousewheel)
+    frm_scroll.bind("<MouseWheel>", _on_mousewheel)
 
     # ── Helpers de layout ─────────────────────────────────────────────────────
     def _secao(pai, titulo: str):
@@ -221,17 +288,16 @@ def abrir_hardware_panel():
         return f
 
     def _linha(card, chave: str, sv: tk.StringVar,
-               sv_cor: tk.StringVar | None = None, negrito: bool = False):
+               negrito: bool = False) -> tk.Label:
         fr = tk.Frame(card, bg=BG_ROW)
-        fr.pack(fill="x", pady=1)
+        fr.pack(fill="x", pady=2)
         tk.Label(fr, text=f"{chave}:", font=FONT_S, bg=BG_ROW,
-                 fg=CINZA, width=22, anchor="w").pack(side="left")
-        kw = {"textvariable": sv, "font": FONT_M if not negrito else FONT_B,
-              "bg": BG_ROW, "anchor": "w"}
-        lbl = tk.Label(fr, **kw)
+                 fg="#AAAAAA", width=22, anchor="w").pack(side="left")
+        lbl = tk.Label(fr, textvariable=sv,
+                       font=FONT_B if negrito else FONT_M,
+                       bg=BG_ROW, fg="#FFFFFF", anchor="w")
         lbl.pack(side="left", fill="x", expand=True)
-        if sv_cor is not None:
-            sv_cor._lbl = lbl  # armazena referência para atualizar fg
+        return lbl  # retorna para permitir mudar fg dinamicamente
 
     def _barra(pai, sv_pct: tk.DoubleVar, cor_var: list) -> tk.Canvas:
         c = tk.Canvas(pai, bg="#1E1E1E", height=5,
@@ -261,10 +327,10 @@ def abrir_hardware_panel():
     sv_cpu_temp = tk.StringVar(value="—")
     pct_cpu_v   = tk.DoubleVar(value=0)
     _barra_cpu  = []
-    _linha(card_cpu, "Uso",         sv_cpu_pct)
-    _barra(card_cpu, pct_cpu_v,     _barra_cpu)
-    _linha(card_cpu, "Núcleos/Freq", sv_cpu_info)
-    _linha(card_cpu, "Temperatura", sv_cpu_temp)
+    lbl_cpu_pct = _linha(card_cpu, "Uso",          sv_cpu_pct, negrito=True)
+    _barra(card_cpu, pct_cpu_v, _barra_cpu)
+    _linha(card_cpu, "Núcleos / Freq", sv_cpu_info)
+    lbl_cpu_temp = _linha(card_cpu, "Temperatura", sv_cpu_temp)
 
     # ────────────────────────────────────────────────────────────────────────
     # RAM
@@ -275,9 +341,9 @@ def abrir_hardware_panel():
     sv_ram_swap = tk.StringVar(value="—")
     pct_ram_v   = tk.DoubleVar(value=0)
     _barra_ram  = []
-    _linha(card_ram, "RAM",   sv_ram_uso)
+    lbl_ram_uso = _linha(card_ram, "RAM",  sv_ram_uso, negrito=True)
     _barra(card_ram, pct_ram_v, _barra_ram)
-    _linha(card_ram, "Swap",  sv_ram_swap)
+    _linha(card_ram, "Swap", sv_ram_swap)
 
     # ────────────────────────────────────────────────────────────────────────
     # GPU
@@ -290,11 +356,11 @@ def abrir_hardware_panel():
     sv_gpu_temp  = tk.StringVar(value="—")
     pct_gpu_v    = tk.DoubleVar(value=0)
     _barra_gpu   = []
-    _linha(card_gpu, "GPU",         sv_gpu_nome)
-    _linha(card_gpu, "VRAM",        sv_gpu_vram)
-    _linha(card_gpu, "Uso GPU",     sv_gpu_uso)
-    _barra(card_gpu, pct_gpu_v,     _barra_gpu)
-    _linha(card_gpu, "Temperatura", sv_gpu_temp)
+    lbl_gpu_nome = _linha(card_gpu, "GPU",         sv_gpu_nome, negrito=True)
+    lbl_gpu_vram = _linha(card_gpu, "VRAM",        sv_gpu_vram)
+    lbl_gpu_uso  = _linha(card_gpu, "Uso GPU",     sv_gpu_uso)
+    _barra(card_gpu, pct_gpu_v, _barra_gpu)
+    lbl_gpu_temp = _linha(card_gpu, "Temperatura", sv_gpu_temp)
 
     # ────────────────────────────────────────────────────────────────────────
     # Disco
@@ -306,9 +372,9 @@ def abrir_hardware_panel():
     sv_disco_clips = tk.StringVar(value="—")
     pct_disco_v    = tk.DoubleVar(value=0)
     _barra_disco   = []
-    _linha(card_disco, "Livre / Total",  sv_disco_livre)
-    _barra(card_disco, pct_disco_v,      _barra_disco)
-    _linha(card_disco, "Banco de dados", sv_disco_db)
+    lbl_disco_livre = _linha(card_disco, "Livre / Total",   sv_disco_livre, negrito=True)
+    _barra(card_disco, pct_disco_v, _barra_disco)
+    _linha(card_disco, "Banco de dados",  sv_disco_db)
     _linha(card_disco, "Clips de alerta", sv_disco_clips)
 
     # ────────────────────────────────────────────────────────────────────────
@@ -320,10 +386,10 @@ def abrir_hardware_panel():
     sv_vis_device = tk.StringVar(value="—")
     sv_vis_cams   = tk.StringVar(value="—")
     sv_vis_rec    = tk.StringVar(value="—")
-    _linha(card_vis, "Motor / Modelo", sv_vis_motor)
-    _linha(card_vis, "Dispositivo",    sv_vis_device)
+    _linha(card_vis, "Motor / Modelo", sv_vis_motor, negrito=True)
+    lbl_vis_device = _linha(card_vis, "Dispositivo",    sv_vis_device)
     _linha(card_vis, "Câmeras ativas", sv_vis_cams)
-    _linha(card_vis, "Recomendação",   sv_vis_rec)
+    lbl_vis_rec    = _linha(card_vis, "Recomendação",   sv_vis_rec)
 
     # ────────────────────────────────────────────────────────────────────────
     # Processo SPARTA
@@ -380,10 +446,13 @@ def abrir_hardware_panel():
         cpu = d.get("cpu_pct", 0)
         pct_cpu_v.set(cpu)
         sv_cpu_pct.set(f"{cpu:.1f}%  {'⚠' if cpu >= 70 else '●'}")
+        lbl_cpu_pct.config(fg=_cor_nivel(cpu))
         freq = d.get("cpu_freq", 0)
         sv_cpu_info.set(f"{d.get('cpu_count', '?')} núcleos  |  {freq:.0f} MHz")
         temp = d.get("cpu_temp")
         sv_cpu_temp.set(f"{temp:.0f} °C" if temp else "Não disponível")
+        if temp:
+            lbl_cpu_temp.config(fg=VERM if temp >= 85 else LARANJA if temp >= 70 else VERDE)
 
         # RAM
         ram_pct = d.get("ram_pct", 0)
@@ -392,6 +461,7 @@ def abrir_hardware_panel():
             f"{_fmt_bytes(d.get('ram_usado', 0))} / "
             f"{_fmt_bytes(d.get('ram_total', 0))}  ({ram_pct:.1f}%)"
         )
+        lbl_ram_uso.config(fg=_cor_nivel(ram_pct))
         swap_pct = d.get("swap_pct", 0)
         sv_ram_swap.set(
             f"{_fmt_bytes(d.get('swap_usado', 0))} / "
@@ -403,17 +473,24 @@ def abrir_hardware_panel():
         gpu_nome = d.get("gpu_nome")
         if gpu_nome:
             sv_gpu_nome.set(gpu_nome)
+            lbl_gpu_nome.config(fg=AZUL)
             vt = d.get("gpu_vram_total", 0)
             vu = d.get("gpu_vram_usado", 0)
             vpct = (vu / vt * 100) if vt else 0
             pct_gpu_v.set(vpct)
             sv_gpu_vram.set(f"{_fmt_bytes(vu)} / {_fmt_bytes(vt)}  ({vpct:.1f}%)")
+            lbl_gpu_vram.config(fg=_cor_nivel(vpct))
             gpct = d.get("gpu_pct")
             sv_gpu_uso.set(f"{gpct}%" if gpct is not None else "Indisponível")
+            if gpct is not None:
+                lbl_gpu_uso.config(fg=_cor_nivel(gpct))
             gtemp = d.get("gpu_temp")
             sv_gpu_temp.set(f"{gtemp} °C" if gtemp is not None else "Indisponível")
+            if gtemp:
+                lbl_gpu_temp.config(fg=VERM if gtemp >= 85 else LARANJA if gtemp >= 70 else VERDE)
         else:
             sv_gpu_nome.set("Sem GPU NVIDIA / CUDA não disponível")
+            lbl_gpu_nome.config(fg=CINZA)
             sv_gpu_vram.set("—")
             sv_gpu_uso.set("—")
             sv_gpu_temp.set("—")
@@ -426,6 +503,7 @@ def abrir_hardware_panel():
             f"{_fmt_bytes(d.get('disco_livre', 0))} livres / "
             f"{_fmt_bytes(d.get('disco_total', 0))}  ({disco_pct:.1f}% usado)"
         )
+        lbl_disco_livre.config(fg=_cor_nivel(disco_pct))
         sv_disco_db.set(_fmt_bytes(d.get("db_tamanho", 0)))
         sv_disco_clips.set(_fmt_bytes(d.get("clips_tamanho", 0)))
 
@@ -439,20 +517,21 @@ def abrir_hardware_panel():
             nomes = {0: "YOLOv8n (Nano)", 1: "YOLOv8s (Small)",
                      2: "YOLOv8m (Medium)", 3: "YOLOv8l (Large)"}
             sv_vis_motor.set(f"{nomes.get(tier, modelo)}  — Tier {tier}")
-            sv_vis_device.set(f"{'GPU (CUDA)' if device == 'cuda' else 'CPU'}")
+            is_gpu = device == "cuda"
+            sv_vis_device.set("GPU (CUDA)" if is_gpu else "CPU (sem GPU)")
+            lbl_vis_device.config(fg=AZUL if is_gpu else LARANJA)
             sv_vis_cams.set(f"{n_cams} / {max_c} suportadas neste hardware")
-            if tier == 0 and device == "cpu":
-                sv_vis_rec.set(
-                    "GPU NVIDIA com CUDA aumentaria precisão e suporte a mais câmeras"
-                )
+            if tier == 0 and not is_gpu:
+                sv_vis_rec.set("Adicione GPU NVIDIA para análise mais precisa e rápida")
+                lbl_vis_rec.config(fg=LARANJA)
             elif n_cams >= max_c * 0.8:
-                sv_vis_rec.set(
-                    f"Capacidade de GPU próxima do limite — considere upgrade"
-                )
+                sv_vis_rec.set("Capacidade de GPU próxima do limite — considere upgrade")
+                lbl_vis_rec.config(fg=VERM)
             else:
                 sv_vis_rec.set("Hardware adequado para a carga atual")
+                lbl_vis_rec.config(fg=VERDE)
         else:
-            sv_vis_motor.set("Motor não inicializado (aguardando 1ª análise)")
+            sv_vis_motor.set("Aguardando 1ª análise para inicializar motor...")
             sv_vis_device.set("—")
             sv_vis_cams.set("—")
             sv_vis_rec.set("—")
@@ -492,9 +571,8 @@ def abrir_hardware_panel():
     _after_id[0] = root.after(200, _coletar_async)
 
     root.update_idletasks()
-    w = max(root.winfo_reqwidth(), 500)
-    h = root.winfo_reqheight()
     sw, sh = root.winfo_screenwidth(), root.winfo_screenheight()
+    w  = max(root.winfo_reqwidth(), 520)
+    h  = min(root.winfo_reqheight(), sh - 80)
     root.geometry(f"{w}x{h}+{(sw-w)//2}+{(sh-h)//2}")
-    root.wait_window()
-    import gc as _gc; _gc.collect()
+    # Sem wait_window() — o loop do OpenCV chama atualizar_janela() a cada frame

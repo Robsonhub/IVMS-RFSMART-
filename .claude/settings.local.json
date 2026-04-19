@@ -58,7 +58,11 @@
       "Bash(where pythonw *)",
       "Bash(start \"\" \"C:/Users/PC-ROBSON/AppData/Local/Programs/Python/Python312/pythonw.exe\" main.py)",
       "Bash(git push *)",
-      "Bash(git add *)"
+      "Bash(git add *)",
+      "Bash(git commit -m ' *)",
+      "Bash(pip install *)",
+      "Bash(start \"\" \"C:\\\\Users\\\\PC-ROBSON\\\\AppData\\\\Local\\\\Programs\\\\Python\\\\Python312\\\\pythonw.exe\" main.py)",
+      "Bash(taskkill //F //IM pythonw.exe)"
     ]
   }
 }

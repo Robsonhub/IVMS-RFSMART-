@@ -1401,7 +1401,7 @@ def rodar_mosaico(cfg_principal, sessao: dict = None, intervalo_ia: int = 3):
         if y < HDR_H + TOOLBAR_H:
             state["hover"] = -1
             bi = _btn_index_at(x)
-            _n_act = 5 if state.get("usuario_grupo") == "administrador" else 2
+            _n_act = 6 if state.get("usuario_grupo") == "administrador" else 2
             act_rects = _toolbar_action_rects(state["win_w"], _n_act)
             ai = -1
             for _i, (ax0, _ay0, ax1, _ay1) in enumerate(act_rects):
@@ -1602,6 +1602,13 @@ def rodar_mosaico(cfg_principal, sessao: dict = None, intervalo_ia: int = 3):
             state["api_online"] = _api_online
             mosaico = _montar_mosaico(slots, state)
             cv2.imshow(WIN_NAME, mosaico)
+
+            # Mantém painel de hardware responsivo sem bloquear o loop
+            try:
+                from hardware_panel import atualizar_janela
+                atualizar_janela()
+            except Exception:
+                pass
 
             key = cv2.waitKey(33) & 0xFF  # ~30fps
 

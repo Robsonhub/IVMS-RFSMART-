@@ -40,3 +40,4 @@ sparta_backup_*.zip
 # Sistema
 Thumbs.db
 .DS_Store
+yolov8n.pt
