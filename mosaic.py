@@ -27,6 +27,18 @@ log = logging.getLogger(__name__)
 # Status global da API Claude (atualizado pelo worker de análise)
 _api_online: bool = True
 
+
+def _vision_label() -> str:
+    """Retorna label do motor de visão sem bloquear (lê singleton se já inicializado)."""
+    try:
+        from vision_engine import VisionEngine
+        eng = VisionEngine._instancia
+        if eng is not None:
+            return eng.modelo_label
+    except Exception:
+        pass
+    return "LOCAL"
+
 # ── Dimensoes fixas da area de video ─────────────────────────────────────────
 MOSAIC_W  = 1280
 MOSAIC_H  = 720
@@ -694,7 +706,8 @@ def _slot_camera(slot: CameraSlot, w: int, h: int,
 # ── Cabecalho ─────────────────────────────────────────────────────────────────
 def _cabecalho(n_ativas: int, layout: int, win_w: int,
                usuario_nome: str = "", usuario_grupo: str = "",
-               api_online: bool = True, hover_api: bool = False) -> np.ndarray:
+               api_online: bool = True, hover_api: bool = False,
+               vision_label: str = "") -> np.ndarray:
     img = np.full((HDR_H, win_w, 3), (18, 18, 18), dtype=np.uint8)
     cv2.rectangle(img, (0, HDR_H - 2), (win_w, HDR_H), C_AMARELO, -1)
 
@@ -715,6 +728,9 @@ def _cabecalho(n_ativas: int, layout: int, win_w: int,
 
     pil_texts = []
     pil_texts.append((api_txt, cx + 8, cy - ath // 2, 9, api_tcor, False))
+    if hover_api and vision_label:
+        vlw, vlh = _txt_size(vision_label, 7)
+        pil_texts.append((vision_label, cx + 8, cy + ath // 2 + 1, 7, (120, 180, 255), False))
     TITULO_SIZE = 15
     INFO_SIZE   = 11
     BADGE_SIZE  = 11
@@ -834,7 +850,8 @@ def _montar_mosaico(slots: dict, state: dict) -> np.ndarray:
                          state.get("usuario_nome", ""),
                          state.get("usuario_grupo", ""),
                          api_online=state.get("api_online", True),
-                         hover_api=state.get("hover_api", False))
+                         hover_api=state.get("hover_api", False),
+                         vision_label=_vision_label())
     toolbar = _toolbar(layout, hover_btn, win_w,
                        hover_act_btn=state.get("hover_act_btn", -1),
                        is_admin=(state.get("usuario_grupo") == "administrador"),
