@@ -1,0 +1,34 @@
+# Segredos
+.env
+*.env
+
+# Banco de dados de producao
+sparta_analytics.db
+sparta_analytics.db-shm
+sparta_analytics.db-wal
+
+# Clips de alerta (arquivos grandes)
+clips_alertas/
+
+# Logs
+*.log
+
+# Python
+__pycache__/
+*.py[cod]
+*.pyo
+*.pyd
+*.egg-info/
+dist/
+build/
+venv/
+env/
+
+# PyInstaller / executavel
+*.spec
+dist_executavel/
+PENDRIVE_*/
+
+# Sistema
+Thumbs.db
+.DS_Store
