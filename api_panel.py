@@ -118,8 +118,11 @@ def _desenhar_grafico(canvas: tk.Canvas, dados: list):
         largura = 480
     canvas.delete("all")
 
-    COR_IN  = "#4488CC"
-    COR_OUT = "#CC6644"
+    COR_IN_FILL  = "#0D2040"
+    COR_IN_LINE  = "#5599EE"
+    COR_OUT_FILL = "#2D1000"
+    COR_OUT_LINE = "#EE8844"
+    COR_GRID     = "#282828"
 
     if not dados:
         canvas.create_text(largura // 2, altura // 2,
@@ -127,46 +130,87 @@ def _desenhar_grafico(canvas: tk.Canvas, dados: list):
                            fill=CINZA, font=FONT_S)
         return
 
-    pad_l, pad_r, pad_t, pad_b = 48, 12, 14, 30
+    pad_l, pad_r, pad_t, pad_b = 52, 16, 18, 30
     area_w = largura - pad_l - pad_r
     area_h = altura  - pad_t - pad_b
 
-    max_tok = max((d.get("tok_in", 0) or 0) + (d.get("tok_out", 0) or 0)
-                  for d in dados) or 1
-    n  = len(dados)
-    bw = max(6, area_w // n - 3)
+    n        = len(dados)
+    vals_in  = [d.get("tok_in",  0) or 0 for d in dados]
+    vals_out = [d.get("tok_out", 0) or 0 for d in dados]
+    vals_tot = [i + o for i, o in zip(vals_in, vals_out)]
+    max_val  = max(max(vals_tot), 1)
 
+    def x_for(i):
+        if n <= 1:
+            return pad_l + area_w // 2
+        return pad_l + int(i * area_w / (n - 1))
+
+    def y_for(v):
+        return pad_t + int(area_h * (1 - v / max_val))
+
+    yb = pad_t + area_h
+
+    # Grid horizontal
     for frac in (0.25, 0.5, 0.75, 1.0):
         gy  = pad_t + int(area_h * (1 - frac))
-        val = int(max_tok * frac)
+        val = int(max_val * frac)
         lbl = f"{val//1000}k" if val >= 1000 else str(val)
-        canvas.create_line(pad_l, gy, largura - pad_r, gy, fill="#252525")
+        canvas.create_line(pad_l, gy, largura - pad_r, gy, fill=COR_GRID, dash=(4, 4))
         canvas.create_text(pad_l - 4, gy, text=lbl, anchor="e",
                            fill=CINZA, font=("Consolas", 7))
 
-    for i, d in enumerate(dados):
-        tok_in  = d.get("tok_in",  0) or 0
-        tok_out = d.get("tok_out", 0) or 0
-        total   = tok_in + tok_out
-        slot_w  = area_w // n
-        x0 = pad_l + i * slot_w + (slot_w - bw) // 2
-        x1 = x0 + bw
-        yb = pad_t + area_h
-        h_total = int(area_h * total  / max_tok)
-        h_out   = int(area_h * tok_out / max_tok)
-        if h_total > 0:
-            canvas.create_rectangle(x0, yb - h_total, x1, yb, fill=COR_IN,  outline="")
-        if h_out > 0:
-            canvas.create_rectangle(x0, yb - h_out,   x1, yb, fill=COR_OUT, outline="")
-        dia = (d.get("dia", "") or "")[-5:]
-        canvas.create_text((x0 + x1) // 2, yb + 4, text=dia,
+    # Eixo Y
+    canvas.create_line(pad_l, pad_t, pad_l, yb + 1, fill="#363636")
+
+    # Área preenchida — total (entrada)
+    if n >= 2:
+        pts_tot  = [(x_for(i), y_for(vals_tot[i])) for i in range(n)]
+        poly_tot = pts_tot + [(x_for(n - 1), yb), (x_for(0), yb)]
+        canvas.create_polygon([c for pt in poly_tot for c in pt],
+                              fill=COR_IN_FILL, outline="", smooth=True)
+        canvas.create_line([c for pt in pts_tot for c in pt],
+                           fill=COR_IN_LINE, width=2, smooth=True)
+    elif n == 1:
+        canvas.create_oval(x_for(0) - 4, y_for(vals_tot[0]) - 4,
+                           x_for(0) + 4, y_for(vals_tot[0]) + 4,
+                           fill=COR_IN_LINE, outline="")
+
+    # Área preenchida — saída
+    if n >= 2:
+        pts_out  = [(x_for(i), y_for(vals_out[i])) for i in range(n)]
+        poly_out = pts_out + [(x_for(n - 1), yb), (x_for(0), yb)]
+        canvas.create_polygon([c for pt in poly_out for c in pt],
+                              fill=COR_OUT_FILL, outline="", smooth=True)
+        canvas.create_line([c for pt in pts_out for c in pt],
+                           fill=COR_OUT_LINE, width=2, smooth=True)
+    elif n == 1:
+        canvas.create_oval(x_for(0) - 3, y_for(vals_out[0]) - 3,
+                           x_for(0) + 3, y_for(vals_out[0]) + 3,
+                           fill=COR_OUT_LINE, outline="")
+
+    # Pontos de dados
+    for i in range(n):
+        x  = x_for(i)
+        yt = y_for(vals_tot[i])
+        yo = y_for(vals_out[i])
+        canvas.create_oval(x - 3, yt - 3, x + 3, yt + 3,
+                           fill=COR_IN_LINE, outline=BG_CARD, width=1)
+        canvas.create_oval(x - 2, yo - 2, x + 2, yo + 2,
+                           fill=COR_OUT_LINE, outline=BG_CARD, width=1)
+
+    # Labels eixo X (espaçadas para não sobrepor)
+    step = max(1, n // 8)
+    for i in range(0, n, step):
+        dia = (dados[i].get("dia", "") or "")[-5:]
+        canvas.create_text(x_for(i), yb + 4, text=dia,
                            anchor="n", fill=CINZA, font=("Consolas", 7))
 
-    canvas.create_rectangle(pad_l,      3, pad_l + 10, 11, fill=COR_IN,  outline="")
-    canvas.create_text(pad_l + 13, 7, text="Entrada", anchor="w",
+    # Legenda
+    canvas.create_rectangle(pad_l,       3, pad_l + 10, 11, fill=COR_IN_LINE,  outline="")
+    canvas.create_text(pad_l + 13, 7, text="Entrada+Saída", anchor="w",
                        fill=CINZA, font=("Consolas", 7))
-    canvas.create_rectangle(pad_l + 68, 3, pad_l + 78, 11, fill=COR_OUT, outline="")
-    canvas.create_text(pad_l + 81, 7, text="Saída", anchor="w",
+    canvas.create_rectangle(pad_l + 100, 3, pad_l + 110, 11, fill=COR_OUT_LINE, outline="")
+    canvas.create_text(pad_l + 113, 7, text="Saída", anchor="w",
                        fill=CINZA, font=("Consolas", 7))
 
 
@@ -187,7 +231,8 @@ def abrir_api_panel(api_online: bool = True):
     root = tk.Tk()
     root.title("SPARTA AGENTE IA — Painel de API")
     root.configure(bg=BG)
-    root.resizable(True, False)
+    root.resizable(True, True)
+    root.minsize(560, 500)
     root.attributes("-topmost", True)
     root.grab_set()
 
@@ -313,7 +358,7 @@ def abrir_api_panel(api_online: bool = True):
         b.bind("<Button-1>", lambda _, d=dias: _carregar_uso(d))
         btn_periodo[dias] = b
 
-    canvas = tk.Canvas(frm_uso, bg=BG_CARD, height=150,
+    canvas = tk.Canvas(frm_uso, bg=BG_CARD, height=180,
                        highlightthickness=1, highlightbackground=CESC)
     canvas.pack(fill="x", pady=(4, 8))
     canvas.bind("<Configure>", lambda _: _desenhar_grafico(canvas, dados_cache[0]))

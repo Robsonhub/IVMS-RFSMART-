@@ -4,6 +4,7 @@ Suporte a layouts 1CH / 4CH / 16CH / 32CH, expansao de slot e analise IA compart
 """
 import json
 import logging
+import math
 import queue
 import threading
 import time
@@ -21,6 +22,57 @@ except ImportError:
     _PIL_OK = False
 
 from local_analyzer import AnalisadorLocal
+
+# ── Logo da empresa ────────────────────────────────────────────────────────────
+_LOGO_PATH  = next(
+    (p for p in [
+        Path(__file__).parent / "assets" / "logo_dark.png",
+        Path(__file__).parent / "assets" / "logo_dark.png.png",
+    ] if p.exists()),
+    Path(__file__).parent / "assets" / "logo_dark.png",
+)
+_logo_cache: np.ndarray | None = None
+
+def _carregar_logo(altura: int) -> np.ndarray | None:
+    """Carrega e redimensiona o logo para a altura do cabeçalho (cache por altura)."""
+    global _logo_cache
+    if _logo_cache is not None and _logo_cache.shape[0] == altura:
+        return _logo_cache
+    if not _LOGO_PATH.exists():
+        return None
+    try:
+        logo = cv2.imread(str(_LOGO_PATH), cv2.IMREAD_UNCHANGED)
+        if logo is None:
+            return None
+        h_orig, w_orig = logo.shape[:2]
+        w_new = int(w_orig * altura / h_orig)
+        logo = cv2.resize(logo, (w_new, altura), interpolation=cv2.INTER_AREA)
+        _logo_cache = logo
+        return logo
+    except Exception:
+        return None
+
+
+def _blend_logo(img: np.ndarray, logo: np.ndarray, x: int, y: int):
+    """Cola o logo (com ou sem canal alpha) sobre img nas coordenadas (x, y)."""
+    lh, lw = logo.shape[:2]
+    ih, iw = img.shape[:2]
+    x0, y0 = max(x, 0), max(y, 0)
+    x1, y1 = min(x + lw, iw), min(y + lh, ih)
+    if x1 <= x0 or y1 <= y0:
+        return
+    lx0, ly0 = x0 - x, y0 - y
+    lx1, ly1 = lx0 + (x1 - x0), ly0 + (y1 - y0)
+    src = logo[ly0:ly1, lx0:lx1]
+    dst = img[y0:y1, x0:x1]
+    if logo.shape[2] == 4:
+        alpha = src[:, :, 3:4].astype(np.float32) / 255.0
+        img[y0:y1, x0:x1] = (src[:, :, :3] * alpha + dst * (1 - alpha)).astype(np.uint8)
+    else:
+        # Fundo preto do logo é transparente via multiply
+        mask = src.max(axis=2, keepdims=True).astype(np.float32) / 255.0
+        img[y0:y1, x0:x1] = (src.astype(np.float32) * mask +
+                               dst.astype(np.float32) * (1 - mask)).astype(np.uint8)
 
 log = logging.getLogger(__name__)
 
@@ -42,7 +94,7 @@ def _vision_label() -> str:
 # ── Dimensoes fixas da area de video ─────────────────────────────────────────
 MOSAIC_W  = 1280
 MOSAIC_H  = 720
-HDR_H     = 36
+HDR_H     = 60
 TOOLBAR_H = 32
 WIN_W     = MOSAIC_W
 WIN_H     = HDR_H + TOOLBAR_H + MOSAIC_H
@@ -83,15 +135,17 @@ _MENU_DROP_ITH  = 30   # altura de cada item do dropdown
 _MENU_DROP_PAD_V = 8   # padding vertical interno
 _MENU_DROP_PAD_H = 14  # padding horizontal do texto
 
-# Cores BGR
-C_BG      = ( 15,  15,  15)
-C_CARD    = ( 30,  30,  30)
-C_AMARELO = (  0, 208, 255)
-C_BRANCO  = (240, 240, 240)
-C_CINZA   = (120, 120, 120)
-C_VERDE   = ( 61, 204, 126)
-C_VERM    = ( 68,  68, 255)
-C_LARAN   = (  0, 100, 255)
+# Cores BGR — paleta RRF Smart Security (ouro/preto)
+C_BG      = ( 10,   8,  12)   # preto profundo com leve tom quente
+C_CARD    = ( 22,  20,  26)   # cards escuros
+C_AMARELO = (  0, 200, 255)   # dourado principal (#FFC800 RGB)
+C_OURO2   = (  0, 140, 200)   # dourado secundário (mais escuro)
+C_BRANCO  = (235, 235, 235)
+C_CINZA   = (110, 110, 120)
+C_VERDE   = ( 60, 200,  80)   # verde OK vivo
+C_VERM    = ( 50,  50, 220)   # vermelho alerta
+C_LARAN   = (  0, 120, 255)   # laranja suspeito
+C_AZUL    = (180, 100,  20)   # azul tech (BGR)
 
 NIVEL_COR = {
     "sem_risco": C_VERDE,
@@ -116,14 +170,29 @@ class CameraSlot:
         self._lock            = threading.Lock()
         self._cap             = None
         self._rodando         = False
+        self._expandido       = False
+        self._trocar          = threading.Event()
         self._bgsub           = cv2.createBackgroundSubtractorMOG2(
                                     history=300, varThreshold=50, detectShadows=False)
         self._thread          = threading.Thread(target=self._loop, daemon=True)
 
-    def iniciar(self, rtsp_uri: str):
-        self._uri     = rtsp_uri
-        self._rodando = True
+    def iniciar(self, rtsp_uri: str, rtsp_sub: str = ""):
+        self._uri_main  = rtsp_uri
+        self._uri_sub   = rtsp_sub
+        # Começa com sub-stream no mosaico; se não tiver, usa o principal
+        self._uri_ativo = rtsp_sub if rtsp_sub else rtsp_uri
+        self._rodando   = True
         self._thread.start()
+
+    def set_expandido(self, expandido: bool):
+        """Troca para stream principal ao expandir, sub-stream ao minimizar."""
+        if not self._rodando:
+            return
+        self._expandido = expandido
+        novo = self._uri_main if (expandido or not self._uri_sub) else self._uri_sub
+        if novo and novo != self._uri_ativo:
+            self._uri_ativo = novo
+            self._trocar.set()  # sinaliza loop — não toca no cap fora da thread
 
     def parar(self):
         self._rodando = False
@@ -152,10 +221,12 @@ class CameraSlot:
         cam_id = self.cfg.get("id", str(self.idx))
         atraso = 1.0
         while self._rodando:
+            self._trocar.clear()
+            uri = self._uri_ativo
             with self._lock:
                 if self._cap:
                     self._cap.release()
-                self._cap = cv2.VideoCapture(self._uri)
+                self._cap = cv2.VideoCapture(uri)
             self._cap.set(cv2.CAP_PROP_OPEN_TIMEOUT_MSEC, 8000)
             self._cap.set(cv2.CAP_PROP_READ_TIMEOUT_MSEC, 8000)
             self._cap.set(cv2.CAP_PROP_BUFFERSIZE, 1)
@@ -164,10 +235,11 @@ class CameraSlot:
                 time.sleep(atraso)
                 atraso = min(atraso * 2, 30)
                 continue
-            log.info("[%s] Stream RTSP conectado", cam_id)
+            log.info("[%s] Stream RTSP conectado (%s)", cam_id,
+                     "PRINCIPAL" if uri == self._uri_main else "SUB")
             atraso = 1.0
             falhas = 0
-            while self._rodando:
+            while self._rodando and not self._trocar.is_set():
                 cap = self._cap
                 if cap is None:
                     break
@@ -183,12 +255,22 @@ class CameraSlot:
                     time.sleep(0.1)
                     continue
                 falhas = 0
-                thumb = cv2.resize(frame, (CAP_W, CAP_H),
-                                   interpolation=cv2.INTER_LINEAR)
-                # Detecção local por subtração de fundo
+                # Expandido → guarda em alta resolução; miniatura → CAP_W x CAP_H
+                if self._expandido:
+                    fh, fw = frame.shape[:2]
+                    escala = min(1280 / fw, 720 / fh, 1.0)
+                    tw = int(fw * escala)
+                    th = int(fh * escala)
+                    thumb = cv2.resize(frame, (tw, th), interpolation=cv2.INTER_LINEAR)
+                else:
+                    thumb = cv2.resize(frame, (CAP_W, CAP_H),
+                                       interpolation=cv2.INTER_LINEAR)
+                # Detecção local por subtração de fundo (sempre em CAP_W x CAP_H)
+                small = thumb if not self._expandido else cv2.resize(
+                    frame, (CAP_W, CAP_H), interpolation=cv2.INTER_LINEAR)
                 bboxes = []
                 try:
-                    mask = self._bgsub.apply(thumb)
+                    mask = self._bgsub.apply(small)
                     mask = cv2.morphologyEx(mask, cv2.MORPH_OPEN,
                                             np.ones((5, 5), np.uint8))
                     mask = cv2.dilate(mask, np.ones((7, 7), np.uint8), iterations=2)
@@ -494,41 +576,75 @@ class FilaAnalise:
 
 # ── Renderizacao dos slots ────────────────────────────────────────────────────
 def _slot_vazio(idx: int, hover: bool, w: int, h: int) -> np.ndarray:
-    bg = (38, 38, 38) if hover else C_CARD
+    bg = (28, 24, 32) if hover else C_CARD
     img = np.full((h, w, 3), bg, dtype=np.uint8)
-    borda = C_AMARELO if hover else (52, 52, 52)
-    cv2.rectangle(img, (1, 1), (w - 2, h - 2), borda, 1)
+
+    # Grid pontilhado de fundo (estilo HUD)
+    dot_step = max(16, min(28, min(w, h) // 10))
+    dot_cor  = (45, 40, 52) if not hover else (60, 55, 70)
+    for gx in range(dot_step, w - 1, dot_step):
+        for gy in range(dot_step, h - 1, dot_step):
+            cv2.circle(img, (gx, gy), 1, dot_cor, -1)
+
+    # Colchetes de canto (estilo tático)
+    arm   = max(10, min(24, min(w, h) // 8))
+    borda = C_AMARELO if hover else (70, 65, 80)
+    thick = 2 if hover else 1
+    for px, py, dx, dy in [(1, 1, 1, 0), (w-2, 1, -1, 0),
+                            (1, h-2, 1, 0), (w-2, h-2, -1, 0)]:
+        sx = 1 if dx > 0 else w - 2
+        sy = py
+        ex = sx + dx * arm
+        cv2.line(img, (sx, sy), (ex, sy), borda, thick)
+        ey = sy + (arm if py == 1 else -arm)
+        cv2.line(img, (sx, sy), (sx, ey), borda, thick)
 
     pil_texts = []
-    FS_SLOT = max(9, min(12, h // 20))
-    FS_ADD  = max(9, min(13, w // 50))
+    FS_SLOT = max(8, min(10, h // 22))
+    FS_ADD  = max(8, min(11, w // 55))
+
+    cx, cy = w // 2, h // 2
 
     if h > 50:
-        btn_r = max(14, min(30, min(w, h) // 6))
-        cx, cy = w // 2, h // 2
-        if h > 90:
-            cy -= 14
+        r_out = max(14, min(32, min(w, h) // 7))
+        r_in  = max(4,  r_out // 3)
+        gap   = r_out // 4
+        reticle_cor = C_AMARELO if hover else (75, 70, 90)
+        shadow_cor  = (0, 0, 0)
 
+        cy_ico = cy - 12 if h > 90 else cy
+
+        # Sombra do reticle
         if hover:
-            cv2.circle(img, (cx + 4, cy + 4), btn_r + 3, (0, 0, 0), -1)
-        btn_bg = C_AMARELO if hover else (58, 58, 58)
-        cv2.circle(img, (cx, cy), btn_r, btn_bg, -1)
-        cv2.ellipse(img, (cx, cy), (btn_r, btn_r), 0, 200, 340, _cor_clara(btn_bg, 60), 1)
+            cv2.circle(img, (cx + 2, cy_ico + 2), r_out, shadow_cor, 1)
 
-        icon_cor = (15, 15, 15) if hover else (100, 100, 100)
-        arm = max(5, btn_r // 2)
-        cv2.line(img, (cx - arm, cy), (cx + arm, cy), icon_cor, 2)
-        cv2.line(img, (cx, cy - arm), (cx, cy + arm), icon_cor, 2)
+        # Círculo externo
+        cv2.circle(img, (cx, cy_ico), r_out, reticle_cor, 1)
+        # Círculo interno
+        cv2.circle(img, (cx, cy_ico), r_in, reticle_cor, 1)
+        # Linhas da mira (com gap central)
+        for lx0, ly0, lx1, ly1 in [
+            (cx - r_out, cy_ico, cx - gap, cy_ico),
+            (cx + gap,   cy_ico, cx + r_out, cy_ico),
+            (cx, cy_ico - r_out, cx, cy_ico - gap),
+            (cx, cy_ico + gap,   cx, cy_ico + r_out),
+        ]:
+            cv2.line(img, (lx0, ly0), (lx1, ly1), reticle_cor, 1)
+
+        # Ícone + no centro do reticle
+        icon_cor = (10, 8, 14) if hover else (80, 75, 95)
+        mini_arm = max(3, r_in // 2)
+        cv2.line(img, (cx - mini_arm, cy_ico), (cx + mini_arm, cy_ico), icon_cor, 2)
+        cv2.line(img, (cx, cy_ico - mini_arm), (cx, cy_ico + mini_arm), icon_cor, 2)
 
         if h > 90:
-            txt = "Adicionar Camera"
-            txt_cor = C_AMARELO if hover else C_CINZA
-            tw, th = _txt_size(txt, FS_ADD)
-            ty = cy + btn_r + 10
-            pil_texts.append((txt, (w - tw) // 2, ty, FS_ADD, txt_cor, False))
+            txt     = "[ ADICIONAR CAMERA ]"
+            txt_cor = C_AMARELO if hover else (80, 75, 95)
+            tw, _   = _txt_size(txt, FS_ADD)
+            pil_texts.append((txt, (w - tw) // 2, cy_ico + r_out + 8, FS_ADD, txt_cor, False))
 
-    sw, sh = _txt_size(f"Slot {idx + 1}", FS_SLOT)
-    pil_texts.append((f"Slot {idx + 1}", 6, 4, FS_SLOT, C_CINZA, False))
+    lbl = f"SLOT {idx + 1:02d}"
+    pil_texts.append((lbl, 6, 4, FS_SLOT, (65, 60, 78), False))
     _pil_render(img, pil_texts)
     return img
 
@@ -645,11 +761,16 @@ def _desenhar_ia_overlay(img: np.ndarray, res: dict, em_analise: bool,
 
 
 def _slot_camera(slot: CameraSlot, w: int, h: int,
-                 closeable: bool = False, show_close: bool = False) -> np.ndarray:
+                 closeable: bool = False, show_close: bool = False,
+                 show_bar: bool = False) -> np.ndarray:
     frame = slot.get_frame()
     if frame is None:
         img = np.full((h, w, 3), C_CARD, dtype=np.uint8)
-        cv2.putText(img, "Conectando...", (max(4, w // 5), h // 2),
+        # Grid pontilhado no slot offline
+        for gx in range(20, w - 1, 20):
+            for gy in range(20, h - 1, 20):
+                cv2.circle(img, (gx, gy), 1, (35, 30, 40), -1)
+        cv2.putText(img, "[ CONECTANDO... ]", (max(4, w // 5), h // 2),
                     cv2.FONT_HERSHEY_SIMPLEX, max(0.3, w / 900), C_CINZA, 1)
         return img
 
@@ -659,44 +780,95 @@ def _slot_camera(slot: CameraSlot, w: int, h: int,
     em_analise = slot.em_analise
     nivel      = res.get("nivel_risco", "")
     cor        = NIVEL_COR.get(nivel, C_CINZA)
+    confianca  = float(res.get("confianca", 0.0)) if res else 0.0
 
     bar_h  = max(16, h // 14)
     escala = max(0.28, min(0.50, w / 640))
+
+    # ── Scan line animada durante análise IA ──────────────────────────────────
+    if em_analise and h > 60:
+        scan_y = int((time.time() * 80) % (h - bar_h)) + bar_h
+        overlay = img.copy()
+        cv2.line(overlay, (0, scan_y), (w - 1, scan_y), C_AMARELO, 1)
+        cv2.addWeighted(overlay, 0.25, img, 0.75, 0, img)
 
     # ── Bounding boxes ────────────────────────────────────────────────────────
     if nivel or deteccoes:
         _desenhar_bboxes(img, res, deteccoes, w, h, cor, bar_h)
 
-    # ── Barra superior ────────────────────────────────────────────────────────
-    cv2.rectangle(img, (0, 0), (w, bar_h), (0, 0, 0), -1)
-    cv2.putText(img, slot.cfg["id"], (4, bar_h - 4),
-                cv2.FONT_HERSHEY_SIMPLEX, escala, C_BRANCO, 1)
+    # ── Borda pulsante em alerta crítico ──────────────────────────────────────
+    if nivel == "critico":
+        pulse = abs(math.sin(time.time() * 3.5))
+        bint  = int(80 + 175 * pulse)
+        bcor  = (30, 30, bint)   # vermelho pulsante
+        cv2.rectangle(img, (0, 0), (w - 1, h - 1), bcor, 3)
+    elif nivel in ("suspeito", "atencao"):
+        cv2.rectangle(img, (0, 0), (w - 1, h - 1), cor, 1)
 
-    if nivel:
-        fonte_tag = "L" if res.get("fonte") == "local" else "C"
-        fonte_cor = (100, 180, 255) if fonte_tag == "L" else (80, 200, 80)
-        r = max(4, bar_h // 3)
-        cv2.circle(img, (w - r - 4, bar_h // 2), r, cor, -1)
-        if w > 120:
-            etiq = nivel.upper()
-            tw = cv2.getTextSize(etiq, cv2.FONT_HERSHEY_SIMPLEX, escala * 0.8, 1)[0][0]
-            cv2.putText(img, etiq, (w - r * 2 - tw - 6, bar_h - 4),
-                        cv2.FONT_HERSHEY_SIMPLEX, escala * 0.8, cor, 1)
-        if w > 80:
-            cv2.putText(img, fonte_tag, (4 + cv2.getTextSize(slot.cfg["id"],
-                        cv2.FONT_HERSHEY_SIMPLEX, escala, 1)[0][0] + 6, bar_h - 4),
-                        cv2.FONT_HERSHEY_SIMPLEX, escala * 0.7, fonte_cor, 1)
+    # ── Colchetes táticos de canto ────────────────────────────────────────────
+    arm   = max(10, min(20, min(w, h) // 9))
+    bcor  = cor if nivel else (80, 75, 90)
+    bth   = 2 if nivel else 1
+    # topo-esquerda
+    cv2.line(img, (0, 0), (arm, 0), bcor, bth)
+    cv2.line(img, (0, 0), (0, arm), bcor, bth)
+    # topo-direita
+    cv2.line(img, (w - 1 - arm, 0), (w - 1, 0), bcor, bth)
+    cv2.line(img, (w - 1, 0), (w - 1, arm), bcor, bth)
+    # baixo-esquerda
+    cv2.line(img, (0, h - 1 - arm), (0, h - 1), bcor, bth)
+    cv2.line(img, (0, h - 1), (arm, h - 1), bcor, bth)
+    # baixo-direita
+    cv2.line(img, (w - 1, h - 1 - arm), (w - 1, h - 1), bcor, bth)
+    cv2.line(img, (w - 1 - arm, h - 1), (w - 1, h - 1), bcor, bth)
+
+    # ── Barra superior semitransparente (só no hover ou expandido) ───────────
+    cam_id = slot.cfg.get("id", f"CAM{slot.idx + 1}")
+    if show_bar:
+        overlay = img.copy()
+        cv2.rectangle(overlay, (0, 0), (w, bar_h), (5, 4, 8), -1)
+        cv2.addWeighted(overlay, 0.75, img, 0.25, 0, img)
+        cv2.line(img, (0, bar_h), (w, bar_h), C_OURO2, 1)
+        cv2.putText(img, cam_id, (4, bar_h - 4),
+                    cv2.FONT_HERSHEY_SIMPLEX, escala, C_AMARELO, 1)
+        if nivel:
+            fonte_tag = "L" if res.get("fonte") == "local" else "AI"
+            fonte_cor = (180, 130, 60) if fonte_tag == "L" else (80, 200, 120)
+            r = max(4, bar_h // 3)
+            cv2.circle(img, (w - r - 4, bar_h // 2), r, cor, -1)
+            if w > 120:
+                etiq = nivel.upper()
+                tw = cv2.getTextSize(etiq, cv2.FONT_HERSHEY_SIMPLEX, escala * 0.8, 1)[0][0]
+                cv2.putText(img, etiq, (w - r * 2 - tw - 6, bar_h - 4),
+                            cv2.FONT_HERSHEY_SIMPLEX, escala * 0.8, cor, 1)
+            if w > 80:
+                id_w = cv2.getTextSize(cam_id, cv2.FONT_HERSHEY_SIMPLEX, escala, 1)[0][0]
+                cv2.putText(img, fonte_tag, (id_w + 8, bar_h - 4),
+                            cv2.FONT_HERSHEY_SIMPLEX, escala * 0.65, fonte_cor, 1)
+
+    # ── Barra de confiança na base ────────────────────────────────────────────
+    if nivel and confianca > 0 and h > 40:
+        bar_conf_w = max(1, int(w * confianca))
+        cv2.rectangle(img, (0, h - 3), (w - 1, h - 1), (20, 18, 24), -1)
+        cv2.rectangle(img, (0, h - 3), (bar_conf_w, h - 1), cor, -1)
+
+    # ── Timestamp no canto inferior direito ───────────────────────────────────
+    if h > 80 and w > 100:
+        ts_txt = datetime.now().strftime("%H:%M:%S")
+        ts_w   = cv2.getTextSize(ts_txt, cv2.FONT_HERSHEY_SIMPLEX, escala * 0.65, 1)[0][0]
+        cv2.putText(img, ts_txt, (w - ts_w - 4, h - 6),
+                    cv2.FONT_HERSHEY_SIMPLEX, escala * 0.65, (60, 55, 75), 1)
 
     # ── Botão fechar (X) ──────────────────────────────────────────────────────
     if closeable and show_close:
         btn_w = max(24, bar_h + 6)
-        cv2.rectangle(img, (w - btn_w, 0), (w, bar_h), (60, 60, 180), -1)
-        cv2.rectangle(img, (w - btn_w, 0), (w, bar_h), (100, 100, 220), 1)
-        cx = w - btn_w // 2
-        cy = bar_h // 2
-        sz = max(4, bar_h // 4)
-        cv2.line(img, (cx - sz, cy - sz), (cx + sz, cy + sz), (220, 220, 255), 2)
-        cv2.line(img, (cx + sz, cy - sz), (cx - sz, cy + sz), (220, 220, 255), 2)
+        cv2.rectangle(img, (w - btn_w, 0), (w - 1, bar_h), (40, 35, 60), -1)
+        cv2.rectangle(img, (w - btn_w, 0), (w - 1, bar_h), C_VERM, 1)
+        cx_ = w - btn_w // 2
+        cy_ = bar_h // 2
+        sz_ = max(4, bar_h // 4)
+        cv2.line(img, (cx_ - sz_, cy_ - sz_), (cx_ + sz_, cy_ + sz_), (200, 200, 255), 2)
+        cv2.line(img, (cx_ + sz_, cy_ - sz_), (cx_ - sz_, cy_ + sz_), (200, 200, 255), 2)
 
     # ── Overlay IA pensando ───────────────────────────────────────────────────
     if (res or em_analise) and h > 120:
@@ -705,59 +877,99 @@ def _slot_camera(slot: CameraSlot, w: int, h: int,
     return img
 
 
+# Posição do botão API no cabeçalho — atualizada a cada render e usada pelo mouse handler
+_api_btn_range: list[int] = [342, 466]   # [x0, x1]
+
+
 # ── Cabecalho ─────────────────────────────────────────────────────────────────
 def _cabecalho(n_ativas: int, layout: int, win_w: int,
                usuario_nome: str = "", usuario_grupo: str = "",
                api_online: bool = True, hover_api: bool = False,
                vision_label: str = "") -> np.ndarray:
-    img = np.full((HDR_H, win_w, 3), (18, 18, 18), dtype=np.uint8)
-    cv2.rectangle(img, (0, HDR_H - 2), (win_w, HDR_H), C_AMARELO, -1)
+    img = np.full((HDR_H, win_w, 3), C_BG, dtype=np.uint8)
 
-    # Indicador de status da API (bolinha colorida — clicável para admin)
-    api_cor  = (0, 200, 60) if api_online else (0, 60, 220)
-    api_txt  = "API OK" if api_online else "API OFF"
-    api_tcor = (200, 255, 200) if api_online else (150, 150, 255)
-    cx, cy = 175, HDR_H // 2
-    if hover_api:
-        cv2.rectangle(img, (155, 2), (265, HDR_H - 3), (40, 40, 40), -1)
-        cv2.rectangle(img, (155, 2), (265, HDR_H - 3), (70, 70, 70), 1)
-    cv2.circle(img, (cx, cy), 5, api_cor, -1)
-    cv2.circle(img, (cx, cy), 5, _cor_clara(api_cor, 60), 1)
-    atw, ath = _txt_size(api_txt, 9)
+    # Linha de circuito decorativa no topo (3px ouro)
+    cv2.line(img, (0, 0), (win_w, 0), C_OURO2, 1)
+    # Linha de acento ouro na base do cabeçalho (mais espessa)
+    cv2.line(img, (0, HDR_H - 1), (win_w, HDR_H - 1), C_AMARELO, 2)
+    cv2.line(img, (0, HDR_H - 3), (win_w, HDR_H - 3), C_OURO2, 1)
 
-    cols, rows = LAYOUTS[layout]
-    info = f"{n_ativas} cam  |  {cols}x{rows}  |  {datetime.now().strftime('%H:%M:%S')}"
+    # Pontos de circuito decorativos (canto esquerdo)
+    for px in range(4, 50, 12):
+        cv2.circle(img, (px, HDR_H - 1), 2, C_OURO2, -1)
 
     pil_texts = []
-    pil_texts.append((api_txt, cx + 8, cy - ath // 2, 9, api_tcor, False))
+    logo_w = 0
+
+    # ── Logo (se existir em assets/logo_dark.png) ──────────────────────────────
+    logo = _carregar_logo(HDR_H - 4)
+    if logo is not None:
+        _blend_logo(img, logo, 4, 2)
+        logo_w = logo.shape[1] + 10
+
+    # ── Linha divisória entre as duas faixas do header ─────────────────────────
+    _ROW1_H = 40  # faixa superior: logo + título + api + stats
+    cv2.line(img, (0, _ROW1_H), (win_w, _ROW1_H), (28, 24, 35), 1)
+
+    # ── Título (faixa superior, centrado verticalmente em _ROW1_H/2) ─────────
+    titulo_x = logo_w + 6
+    pil_texts.append(("SPARTA AGENTE IA",
+                       titulo_x, 6, 15, C_AMARELO, True))
+
+    # ── Indicador API (clicável para admin) ────────────────────────────────────
+    api_cor  = (0, 200, 60) if api_online else (50, 50, 210)
+    api_txt  = "API OK" if api_online else "API OFF"
+    api_tcor = (180, 255, 180) if api_online else (150, 150, 255)
+    api_x    = titulo_x + 280
+    # Sincroniza posição com mouse handler
+    _api_btn_range[0] = api_x - 4
+    _api_btn_range[1] = api_x + 120
+    api_cy   = _ROW1_H // 2
+
+    if hover_api:
+        cv2.rectangle(img, (api_x - 4, 2), (api_x + 120, _ROW1_H - 2), (35, 30, 40), -1)
+        cv2.rectangle(img, (api_x - 4, 2), (api_x + 120, _ROW1_H - 2), C_OURO2, 1)
+
+    # Bolinha pulsante (usa sin do tempo)
+    pulse = int(180 + 75 * abs(math.sin(time.time() * 2)))
+    api_glow = tuple(min(255, int(c * pulse / 255)) for c in api_cor)
+    cv2.circle(img, (api_x + 6, api_cy), 5, api_cor, -1)
+    cv2.circle(img, (api_x + 6, api_cy), 5, api_glow, 1)
+    _, ath = _txt_size(api_txt, 9)
+    pil_texts.append((api_txt, api_x + 15, api_cy - ath // 2, 9, api_tcor, False))
     if hover_api and vision_label:
-        vlw, vlh = _txt_size(vision_label, 7)
-        pil_texts.append((vision_label, cx + 8, cy + ath // 2 + 1, 7, (120, 180, 255), False))
-    TITULO_SIZE = 15
-    INFO_SIZE   = 11
-    BADGE_SIZE  = 11
+        pil_texts.append((vision_label, api_x + 15, api_cy + ath // 2 + 2, 7,
+                           (120, 160, 255), False))
 
-    # Título
-    pil_texts.append(("SPARTA AGENTE IA", 10, (HDR_H - TITULO_SIZE) // 2 - 1,
-                       TITULO_SIZE, C_AMARELO, True))
+    # ── Stats em tempo real (faixa superior, canto direito) ───────────────────
+    cols, rows = LAYOUTS[layout]
+    hora  = datetime.now().strftime("%H:%M:%S")
+    stat1 = f"{n_ativas} CAM  {cols}x{rows}"
+    stat2 = hora
+    s1w, _ = _txt_size(stat1, 8)
+    s2w, _ = _txt_size(stat2, 10)
+    stats_x = win_w - max(s1w, s2w) - 160
+    pil_texts.append((stat1, stats_x, 5,  8,  C_CINZA,   False))
+    pil_texts.append((stat2, stats_x, 18, 11, C_AMARELO, True))
 
-    # Badge de usuário
+    # ── Slogan — faixa inferior centralizada (y=40 a y=58) ───────────────────
+    slogan = "RF SMART SECURITY  |  VIGILANCIA INTELIGENTE POR IA"
+    sw, sh = _txt_size(slogan, 9)
+    sx = max(titulo_x, (win_w - sw) // 2)
+    pil_texts.append((slogan, sx, _ROW1_H + 4, 9, (220, 210, 240), False))
+
+    # ── Badge de usuário (extrema direita) ─────────────────────────────────────
     if usuario_nome:
         grupo_label = "ADM" if usuario_grupo == "administrador" else "USR"
-        badge_cor   = (0, 180, 80) if usuario_grupo == "administrador" else (80, 80, 180)
-        badge_txt   = f" {usuario_nome} [{grupo_label}] "
-        bw, bh      = _txt_size(badge_txt, BADGE_SIZE, bold=True)
-        bx = win_w - bw - 18
-        by = (HDR_H - bh) // 2
-        cv2.rectangle(img, (bx - 6, by - 3), (bx + bw + 6, by + bh + 3), badge_cor, -1)
-        cv2.rectangle(img, (bx - 6, by - 3), (bx + bw + 6, by + bh + 3),
-                      _cor_clara(badge_cor, 40), 1)
-        pil_texts.append((badge_txt, bx, by, BADGE_SIZE, (255, 255, 255), True))
-        iw, ih = _txt_size(info, INFO_SIZE)
-        pil_texts.append((info, bx - iw - 16, (HDR_H - ih) // 2, INFO_SIZE, C_CINZA, False))
-    else:
-        iw, ih = _txt_size(info, INFO_SIZE)
-        pil_texts.append((info, win_w - iw - 12, (HDR_H - ih) // 2, INFO_SIZE, C_CINZA, False))
+        badge_cor   = (20, 140, 60) if usuario_grupo == "administrador" else (120, 60, 140)
+        badge_txt   = f"  {usuario_nome} [{grupo_label}]  "
+        bw, bh      = _txt_size(badge_txt, 9, bold=True)
+        bx = win_w - bw - 8
+        by = (_ROW1_H - bh) // 2
+        # Fundo do badge com borda ouro
+        cv2.rectangle(img, (bx - 2, by - 3), (bx + bw + 2, by + bh + 3), badge_cor, -1)
+        cv2.rectangle(img, (bx - 2, by - 3), (bx + bw + 2, by + bh + 3), C_AMARELO, 1)
+        pil_texts.append((badge_txt, bx, by, 9, (255, 255, 255), True))
 
     _pil_render(img, pil_texts)
     return img
@@ -768,9 +980,9 @@ def _toolbar(layout_atual: int, hover_btn: int, win_w: int,
              hover_act_btn: int = -1, is_admin: bool = False,
              cam_slots: set | None = None,
              menu_aberto: bool = False) -> np.ndarray:
-    img = np.full((TOOLBAR_H, win_w, 3), (20, 20, 20), dtype=np.uint8)
-    cv2.line(img, (0, 0), (win_w, 0), (45, 45, 45), 1)
-    cv2.line(img, (0, TOOLBAR_H - 1), (win_w, TOOLBAR_H - 1), (10, 10, 10), 1)
+    img = np.full((TOOLBAR_H, win_w, 3), (14, 12, 18), dtype=np.uint8)
+    cv2.line(img, (0, 0), (win_w, 0), C_OURO2, 1)
+    cv2.line(img, (0, TOOLBAR_H - 1), (win_w, TOOLBAR_H - 1), (8, 6, 12), 1)
 
     BTN_FS = 11  # font size para botões
     pil_texts = []
@@ -857,9 +1069,16 @@ def _montar_mosaico(slots: dict, state: dict) -> np.ndarray:
                        cam_slots=set(slots.keys()),
                        menu_aberto=state.get("menu_aberto", False))
 
+    # Sincroniza stream principal/sub conforme slot expandido
+    for i, sl in slots.items():
+        try:
+            sl.set_expandido(i == expandido)
+        except Exception:
+            pass
+
     if expandido is not None and expandido in slots:
         video = _slot_camera(slots[expandido], mosaic_w, mosaic_h,
-                             closeable=True, show_close=True)
+                             closeable=True, show_close=True, show_bar=True)
         cv2.putText(video, "Clique para voltar", (10, mosaic_h - 10),
                     cv2.FONT_HERSHEY_SIMPLEX, 0.45, C_CINZA, 1)
     else:
@@ -867,7 +1086,8 @@ def _montar_mosaico(slots: dict, state: dict) -> np.ndarray:
         for i in range(max_cams):
             if i in slots:
                 celulas.append(_slot_camera(slots[i], slot_w, slot_h,
-                                            closeable=True, show_close=(i == hover)))
+                                            closeable=True, show_close=(i == hover),
+                                            show_bar=(i == hover)))
             else:
                 celulas.append(_slot_vazio(i, i == hover, slot_w, slot_h))
 
@@ -991,16 +1211,27 @@ def _dialogo_adicionar(slot_idx: int, cfg_atual: dict = None) -> dict | None:
     e_ch   = _entry("Canal (1, 2, 3...)",     False, str(c.get("canal", "1")))
 
     tk.Frame(corpo, bg="#333333", height=1).pack(fill="x", pady=(4, 8))
-    tk.Label(corpo, text="URI RTSP manual (opcional — substitui descoberta ONVIF)",
+    tk.Label(corpo, text="Stream Principal — URI RTSP (opcional — substitui ONVIF)",
              font=("Segoe UI", 8), bg=BG2, fg="#888888").pack(anchor="w")
     e_rtsp = tk.Entry(corpo, font=("Consolas", 9), bg=ENT, fg=BCOR,
                       insertbackground=AMA, relief="flat", bd=0,
                       highlightthickness=1, highlightcolor=AMA,
                       highlightbackground=CESC, width=38)
     e_rtsp.insert(0, c.get("rtsp_uri", ""))
-    e_rtsp.pack(fill="x", ipady=4, pady=(2, 10))
+    e_rtsp.pack(fill="x", ipady=4, pady=(2, 6))
     e_rtsp.bind("<FocusIn>",  lambda ev: e_rtsp.config(highlightbackground=AMA))
     e_rtsp.bind("<FocusOut>", lambda ev: e_rtsp.config(highlightbackground=CESC))
+
+    tk.Label(corpo, text="Stream Secundário — URI RTSP baixa resolução (miniatura, opcional)",
+             font=("Segoe UI", 8), bg=BG2, fg="#888888").pack(anchor="w")
+    e_rtsp_sub = tk.Entry(corpo, font=("Consolas", 9), bg=ENT, fg=BCOR,
+                          insertbackground=AMA, relief="flat", bd=0,
+                          highlightthickness=1, highlightcolor=AMA,
+                          highlightbackground=CESC, width=38)
+    e_rtsp_sub.insert(0, c.get("rtsp_uri_sub", ""))
+    e_rtsp_sub.pack(fill="x", ipady=4, pady=(2, 10))
+    e_rtsp_sub.bind("<FocusIn>",  lambda ev: e_rtsp_sub.config(highlightbackground=AMA))
+    e_rtsp_sub.bind("<FocusOut>", lambda ev: e_rtsp_sub.config(highlightbackground=CESC))
 
     lbl_status = tk.Label(corpo, text="", font=("Segoe UI", 8),
                           bg=BG2, fg=VERM, wraplength=320, justify="left")
@@ -1053,12 +1284,13 @@ def _dialogo_adicionar(slot_idx: int, cfg_atual: dict = None) -> dict | None:
             return
         uri_manual = e_rtsp.get().strip()
         cfg_cam = {
-            "id":      e_id.get().strip()   or f"CAM-{slot_idx+1:02d}",
-            "ip":      e_ip.get().strip(),
-            "porta":   e_port.get().strip() or "80",
-            "usuario": e_user.get().strip(),
-            "senha":   e_pw.get().strip(),
-            "canal":   e_ch.get().strip()   or "1",
+            "id":           e_id.get().strip()   or f"CAM-{slot_idx+1:02d}",
+            "ip":           e_ip.get().strip(),
+            "porta":        e_port.get().strip() or "80",
+            "usuario":      e_user.get().strip(),
+            "senha":        e_pw.get().strip(),
+            "canal":        e_ch.get().strip()   or "1",
+            "rtsp_uri_sub": e_rtsp_sub.get().strip(),
         }
         if not cfg_cam["ip"] and not uri_manual:
             lbl_status.config(text="Informe o IP ou uma URI RTSP manual.", fg=VERM)
@@ -1315,7 +1547,7 @@ def rodar_mosaico(cfg_principal, sessao: dict = None, intervalo_ia: int = 3):
 
     def _adicionar_slot(idx: int, cfg_cam: dict):
         slot = CameraSlot(idx, cfg_cam)
-        slot.iniciar(cfg_cam["rtsp_uri"])
+        slot.iniciar(cfg_cam["rtsp_uri"], cfg_cam.get("rtsp_uri_sub", ""))
         slots[idx] = slot
 
     def _salvar_todos():
@@ -1413,7 +1645,7 @@ def rodar_mosaico(cfg_principal, sessao: dict = None, intervalo_ia: int = 3):
                 s.parar()
                 time.sleep(0.3)
                 novo = CameraSlot(slot_idx, cfg_bkp)
-                novo.iniciar(cfg_bkp["rtsp_uri"])
+                novo.iniciar(cfg_bkp["rtsp_uri"], cfg_bkp.get("rtsp_uri_sub", ""))
                 slots[slot_idx] = novo
                 log.info("Conexao reiniciada: slot %d", slot_idx)
 
@@ -1441,7 +1673,7 @@ def rodar_mosaico(cfg_principal, sessao: dict = None, intervalo_ia: int = 3):
                     s.parar()
                     cfg_novo["slot_idx"] = slot_idx
                     novo = CameraSlot(slot_idx, cfg_novo)
-                    novo.iniciar(cfg_novo["rtsp_uri"])
+                    novo.iniciar(cfg_novo["rtsp_uri"], cfg_novo.get("rtsp_uri_sub", ""))
                     slots[slot_idx] = novo
                     _salvar_todos()
                     log.info("Camera reconfigurada: slot %d", slot_idx)
@@ -1488,8 +1720,8 @@ def rodar_mosaico(cfg_principal, sessao: dict = None, intervalo_ia: int = 3):
         if y < HDR_H:
             state["hover"]     = -1
             state["hover_btn"] = -1
-            state["hover_api"] = _admin and 155 <= x <= 265
-            if event == cv2.EVENT_LBUTTONDOWN and _admin and 155 <= x <= 265:
+            state["hover_api"] = _admin and _api_btn_range[0] <= x <= _api_btn_range[1]
+            if event == cv2.EVENT_LBUTTONDOWN and _admin and _api_btn_range[0] <= x <= _api_btn_range[1]:
                 _panel_pendente[0] = "api"
             return
         state["hover_api"] = False
