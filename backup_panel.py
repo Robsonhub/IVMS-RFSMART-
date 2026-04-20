@@ -14,6 +14,7 @@ import tkinter as tk
 from tkinter import filedialog, messagebox, ttk
 
 import db as _db
+import data_export_panel as _exp
 
 log = logging.getLogger(__name__)
 
@@ -596,6 +597,14 @@ def abrir_backup_panel(parent=None, sessao: dict | None = None):
          bg=VERM, fg=BCOR).pack(side="left", padx=(6, 0))
     _btn(frm_btns, " Listar ",          _atualizar_historico,
          bg=CESC, fg=BCOR).pack(side="left", padx=(6, 0))
+
+    ROXO = "#7744CC"
+    def _abrir_export():
+        _exp.abrir_export_panel(parent=root, sessao=sessao)
+
+    _btn(frm_btns, " Exportar p/ Dev ",  _abrir_export,
+         bg=ROXO, fg=BCOR).pack(side="left", padx=(6, 0))
+
     _btn(frm_btns, " Fechar ",          _fechar,
          bg=CESC, fg=BCOR).pack(side="right")
 

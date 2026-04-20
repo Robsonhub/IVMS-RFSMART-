@@ -74,9 +74,14 @@ _TOOLBAR_BTN_H   = 22
 _TOOLBAR_BTN_GAP = 8
 _TOOLBAR_BTN_Y0  = (TOOLBAR_H - _TOOLBAR_BTN_H) // 2
 
-# Botoes de acao (Sair / Treinar / Usuarios)
-_ACT_BTN_W   = 78
-_ACT_BTN_GAP = 6
+# Botão ☰ Menu (substitui botões de ação individuais)
+_ACT_BTN_W    = 78   # mantido para compatibilidade
+_ACT_BTN_GAP  = 6
+_MENU_BTN_W   = 90   # largura do botão ☰ Menu na toolbar
+_MENU_DROP_W  = 160  # largura do painel dropdown
+_MENU_DROP_ITH  = 30   # altura de cada item do dropdown
+_MENU_DROP_PAD_V = 8   # padding vertical interno
+_MENU_DROP_PAD_H = 14  # padding horizontal do texto
 
 # Cores BGR
 C_BG      = ( 15,  15,  15)
@@ -334,14 +339,11 @@ def _draw_modern_btn(img: np.ndarray, x0: int, y0: int, x1: int, y1: int,
                 src_rect=(x0, y0, x1 + 4, y1 + 4))
 
 
-def _toolbar_action_rects(win_w: int, n: int) -> list:
-    """Retorna lista de (x0,y0,x1,y1) dos botões de ação, alinhados à direita."""
-    rects, x = [], win_w - 10
-    for _ in range(n):
-        x1, x0 = x, x - _ACT_BTN_W
-        rects.insert(0, (x0, _TOOLBAR_BTN_Y0, x1, _TOOLBAR_BTN_Y0 + _TOOLBAR_BTN_H))
-        x = x0 - _ACT_BTN_GAP
-    return rects
+def _toolbar_action_rects(win_w: int, n: int = 0) -> list:
+    """Retorna lista com o rect do botão ☰ Menu, alinhado à direita."""
+    x1 = win_w - 10
+    x0 = x1 - _MENU_BTN_W
+    return [(x0, _TOOLBAR_BTN_Y0, x1, _TOOLBAR_BTN_Y0 + _TOOLBAR_BTN_H)]
 
 
 def _mesclar_bboxes(boxes: list, gap: int = 20) -> list:
@@ -764,7 +766,8 @@ def _cabecalho(n_ativas: int, layout: int, win_w: int,
 # ── Toolbar de layout ─────────────────────────────────────────────────────────
 def _toolbar(layout_atual: int, hover_btn: int, win_w: int,
              hover_act_btn: int = -1, is_admin: bool = False,
-             cam_slots: set | None = None) -> np.ndarray:
+             cam_slots: set | None = None,
+             menu_aberto: bool = False) -> np.ndarray:
     img = np.full((TOOLBAR_H, win_w, 3), (20, 20, 20), dtype=np.uint8)
     cv2.line(img, (0, 0), (win_w, 0), (45, 45, 45), 1)
     cv2.line(img, (0, TOOLBAR_H - 1), (win_w, TOOLBAR_H - 1), (10, 10, 10), 1)
@@ -808,23 +811,18 @@ def _toolbar(layout_atual: int, hover_btn: int, win_w: int,
     sep_x = 10 + 4 * (_TOOLBAR_BTN_W + _TOOLBAR_BTN_GAP) + 6
     cv2.line(img, (sep_x, 4), (sep_x, TOOLBAR_H - 4), (55, 55, 55), 1)
 
-    # Botoes de acao (direita)
-    action_defs = [
-        ("Sair",    (55, 45, 185), (235, 225, 255)),
-        ("Treinar", (25, 105, 145),(195, 240, 255)),
-    ]
-    if is_admin:
-        action_defs.append(("Usuarios", (30, 125, 50), (185, 255, 195)))
-        action_defs.append(("Backup",   (130, 80, 20), (255, 210, 160)))
-        action_defs.append(("Update",   (20, 80, 130), (160, 210, 255)))
-        action_defs.append(("Hardware", (60, 40, 120), (210, 190, 255)))
-
-    rects = _toolbar_action_rects(win_w, len(action_defs))
-    for i, ((label, bg, fg), (x0, y0, x1, y1)) in enumerate(zip(action_defs, rects)):
-        _draw_btn_bg(img, x0, y0, x1, y1, bg, hover=(i == hover_act_btn))
-        tw, th = _txt_size(label, BTN_FS)
-        pil_texts.append((label, x0 + (x1 - x0 - tw) // 2, y0 + (y1 - y0 - th) // 2,
-                           BTN_FS, fg, False))
+    # Botão ☰ Menu (direita) — abre dropdown ao clicar
+    mx0, my0, mx1, my1 = _toolbar_action_rects(win_w)[0]
+    menu_hover = (hover_act_btn == 0)
+    bg_menu = (20, 60, 80) if menu_aberto else ((60, 60, 60) if menu_hover else (45, 45, 45))
+    _draw_btn_bg(img, mx0, my0, mx1, my1, bg_menu, hover=False)
+    lbl_menu = "\u2630 Menu"
+    tw, th   = _txt_size(lbl_menu, BTN_FS)
+    fg_menu  = C_AMARELO if menu_aberto else (C_BRANCO if menu_hover else C_CINZA)
+    pil_texts.append((lbl_menu,
+                      mx0 + (mx1 - mx0 - tw) // 2,
+                      my0 + (my1 - my0 - th) // 2,
+                      BTN_FS, fg_menu, menu_aberto))
 
     _pil_render(img, pil_texts)
     return img
@@ -856,7 +854,8 @@ def _montar_mosaico(slots: dict, state: dict) -> np.ndarray:
     toolbar = _toolbar(layout, hover_btn, win_w,
                        hover_act_btn=state.get("hover_act_btn", -1),
                        is_admin=(state.get("usuario_grupo") == "administrador"),
-                       cam_slots=set(slots.keys()))
+                       cam_slots=set(slots.keys()),
+                       menu_aberto=state.get("menu_aberto", False))
 
     if expandido is not None and expandido in slots:
         video = _slot_camera(slots[expandido], mosaic_w, mosaic_h,
@@ -882,6 +881,13 @@ def _montar_mosaico(slots: dict, state: dict) -> np.ndarray:
 
     if state.get("ctx_menu"):
         frame = _desenhar_ctx_menu(frame, state["ctx_menu"])
+
+    if state.get("menu_aberto"):
+        frame = _desenhar_menu_dropdown(
+            frame, state["win_w"],
+            state.get("usuario_grupo") == "administrador",
+            state.get("menu_hover", -1),
+        )
 
     # ── Visual de drag & drop ─────────────────────────────────────────────────
     if state.get("drag_started") and state.get("drag_from") is not None:
@@ -1142,6 +1148,94 @@ def _ctx_inside(ctx: dict, x: int, y: int, iw: int, ih: int) -> bool:
     return x0 <= x <= x0 + CTX_W and y0 <= y <= y0 + total_h
 
 
+# ── Menu dropdown (☰ Menu) ────────────────────────────────────────────────────
+
+def _menu_items(is_admin: bool) -> list:
+    """Itens do dropdown ☰ Menu."""
+    base = [
+        {"label": "Treinar",  "action": "treinar",  "cor": (195, 240, 255)},
+        {"sep": True},
+        {"label": "Sair",     "action": "sair",     "cor": (235, 225, 255), "danger": True},
+    ]
+    if not is_admin:
+        return base
+    return [
+        {"label": "Usuarios", "action": "usuarios", "cor": (185, 255, 195)},
+        {"label": "Backup",   "action": "backup",   "cor": (255, 210, 160)},
+        {"label": "Update",   "action": "update",   "cor": (160, 210, 255)},
+        {"label": "Hardware", "action": "hardware", "cor": (210, 190, 255)},
+        {"sep": True},
+        {"label": "Treinar",  "action": "treinar",  "cor": (195, 240, 255)},
+        {"sep": True},
+        {"label": "Sair",     "action": "sair",     "cor": (235, 225, 255), "danger": True},
+    ]
+
+
+def _menu_drop_geometry(win_w: int) -> tuple:
+    """Retorna (x0, y0, x1, total_h) do painel dropdown."""
+    items  = _menu_items(True)   # usa admin=True para calcular tamanho máximo
+    total_h = _MENU_DROP_PAD_V * 2
+    for it in items:
+        total_h += CTX_SEP_H if it.get("sep") else _MENU_DROP_ITH
+    btn_rect = _toolbar_action_rects(win_w)[0]
+    x1 = btn_rect[2]
+    x0 = x1 - _MENU_DROP_W
+    y0 = HDR_H + TOOLBAR_H
+    return x0, y0, x1, total_h
+
+
+def _menu_drop_hit(x: int, y: int, win_w: int, is_admin: bool) -> int:
+    """Retorna índice do item clicável em (x,y) ou -1."""
+    items  = _menu_items(is_admin)
+    btn    = _toolbar_action_rects(win_w)[0]
+    drop_x0 = btn[2] - _MENU_DROP_W
+    drop_x1 = btn[2]
+    if not (drop_x0 <= x <= drop_x1):
+        return -1
+    cy = HDR_H + TOOLBAR_H + _MENU_DROP_PAD_V
+    for i, item in enumerate(items):
+        if item.get("sep"):
+            cy += CTX_SEP_H
+            continue
+        if cy <= y < cy + _MENU_DROP_ITH and not item.get("header"):
+            return i
+        cy += _MENU_DROP_ITH
+    return -1
+
+
+def _desenhar_menu_dropdown(img: np.ndarray, win_w: int,
+                             is_admin: bool, hover: int) -> np.ndarray:
+    """Desenha o painel dropdown do ☰ Menu sobre o frame."""
+    items  = _menu_items(is_admin)
+    x0, y0, x1, total_h = _menu_drop_geometry(win_w)
+    y1 = y0 + total_h
+
+    # Sombra + fundo
+    cv2.rectangle(img, (x0 + 4, y0 + 4), (x1 + 4, y1 + 4), (0, 0, 0), -1)
+    cv2.rectangle(img, (x0, y0), (x1, y1), (28, 28, 28), -1)
+    cv2.rectangle(img, (x0, y0), (x1, y1), (75, 75, 75), 1)
+
+    cy = y0 + _MENU_DROP_PAD_V
+    for i, item in enumerate(items):
+        if item.get("sep"):
+            mid = cy + CTX_SEP_H // 2
+            cv2.line(img, (x0 + 8, mid), (x1 - 8, mid), (65, 65, 65), 1)
+            cy += CTX_SEP_H
+            continue
+        iy1 = cy + _MENU_DROP_ITH
+        if i == hover:
+            bg = (35, 18, 18) if item.get("danger") else (45, 45, 12)
+            cv2.rectangle(img, (x0 + 1, cy), (x1 - 1, iy1), bg, -1)
+        cor = (80, 80, 230) if item.get("danger") else item.get("cor", C_BRANCO)
+        if i == hover:
+            cor = (60, 60, 255) if item.get("danger") else C_AMARELO
+        cv2.putText(img, item["label"],
+                    (x0 + _MENU_DROP_PAD_H, cy + 20),
+                    cv2.FONT_HERSHEY_SIMPLEX, 0.42, cor, 1)
+        cy = iy1
+    return img
+
+
 def _desenhar_ctx_menu(img: np.ndarray, ctx: dict) -> np.ndarray:
     iw, ih = img.shape[1], img.shape[0]
     x0, y0, total_h = _ctx_geometry(ctx, iw, ih)
@@ -1206,6 +1300,9 @@ def rodar_mosaico(cfg_principal, sessao: dict = None, intervalo_ia: int = 3):
         "usuario_grupo": _usuario_grupo,
         "api_online":    True,
         "hover_api":     False,   # mouse sobre indicador API no cabeçalho
+        # Menu dropdown
+        "menu_aberto":   False,
+        "menu_hover":    -1,
         # Drag & drop
         "drag_from":     None,   # slot_idx sendo arrastado
         "drag_sx":       0,      # mouse X no inicio do drag
@@ -1397,19 +1494,28 @@ def rodar_mosaico(cfg_principal, sessao: dict = None, intervalo_ia: int = 3):
             return
         state["hover_api"] = False
 
+        # Se dropdown aberto — tratar hover/clique antes de tudo
+        if state.get("menu_aberto"):
+            hit = _menu_drop_hit(x, y, iw, _admin)
+            state["menu_hover"] = hit
+            if event == cv2.EVENT_LBUTTONDOWN:
+                state["menu_aberto"] = False
+                if hit >= 0:
+                    action = _menu_items(_admin)[hit].get("action")
+                    if action:
+                        state["req_action"] = action
+            elif event in (cv2.EVENT_RBUTTONDOWN, cv2.EVENT_MBUTTONDOWN):
+                state["menu_aberto"] = False
+            return
+
         # Toolbar
         if y < HDR_H + TOOLBAR_H:
             state["hover"] = -1
             bi = _btn_index_at(x)
-            _n_act = 6 if state.get("usuario_grupo") == "administrador" else 2
-            act_rects = _toolbar_action_rects(state["win_w"], _n_act)
-            ai = -1
-            for _i, (ax0, _ay0, ax1, _ay1) in enumerate(act_rects):
-                if ax0 <= x <= ax1:
-                    ai = _i
-                    break
-            state["hover_btn"]     = bi if ai < 0 else -1
-            state["hover_act_btn"] = ai
+            menu_rect = _toolbar_action_rects(state["win_w"])[0]
+            on_menu = menu_rect[0] <= x <= menu_rect[2]
+            state["hover_btn"]     = bi if not on_menu else -1
+            state["hover_act_btn"] = 0 if on_menu else -1
             if event == cv2.EVENT_LBUTTONDOWN:
                 if bi >= 0:
                     novo_layout = LAYOUT_ORDER[bi]
@@ -1417,8 +1523,9 @@ def rodar_mosaico(cfg_principal, sessao: dict = None, intervalo_ia: int = 3):
                         state["layout"]    = novo_layout
                         state["expandido"] = None
                         log.info("Layout alterado para %dCH", novo_layout)
-                elif ai >= 0:
-                    state["req_action"] = ai
+                elif on_menu:
+                    state["menu_aberto"] = not state.get("menu_aberto", False)
+                    state["menu_hover"]  = -1
             return
 
         state["hover_btn"] = -1
@@ -1586,14 +1693,10 @@ def rodar_mosaico(cfg_principal, sessao: dict = None, intervalo_ia: int = 3):
                     frame_idx[idx] = frame_idx.get(idx, 0) + 1
                     fila.enfileirar(slot, fid, frame)
 
-            # Processa acao solicitada pelos botoes da toolbar
+            # Processa acao solicitada pelo dropdown ☰ Menu
             if state["req_action"] is not None:
-                ai = state["req_action"]
+                acao = state["req_action"]
                 state["req_action"] = None
-                _acoes = ["sair", "treinar"] + (
-                    ["usuarios", "backup", "update", "hardware"] if _admin else []
-                )
-                acao = _acoes[ai] if ai < len(_acoes) else None
                 if acao == "sair":
                     break
                 elif acao in ("treinar", "usuarios", "backup", "update", "hardware"):
