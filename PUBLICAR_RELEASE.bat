@@ -101,7 +101,11 @@ echo.
 echo [5/6] Empacotando %ZIP_NAME%...
 if exist "%ZIP_PATH%" del /f /q "%ZIP_PATH%"
 
-powershell -NoProfile -Command "Compress-Archive -Path '%DIST_DIR%\*' -DestinationPath '%ZIP_PATH%' -CompressionLevel Optimal; if ($?) { $mb = [math]::Round((Get-Item '%ZIP_PATH%').Length/1MB,1); Write-Host \"[OK] %ZIP_NAME%  ($mb MB)\" }"
+:: Encerra o app se estiver rodando (libera arquivos bloqueados)
+taskkill /f /im MonitorTapeteOuro.exe >nul 2>&1
+timeout /t 2 /nobreak >nul
+
+python -c "import zipfile,pathlib;src=pathlib.Path(r'%DIST_DIR%');out=pathlib.Path(r'%ZIP_PATH%');zf=zipfile.ZipFile(out,'w',zipfile.ZIP_DEFLATED,compresslevel=6);[zf.write(f,f.relative_to(src)) for f in src.rglob('*') if f.is_file()];zf.close();sz=round(out.stat().st_size/1048576,1);print(f'[OK] {out.name}  ({sz} MB)')"
 if errorlevel 1 (
     echo [ERRO] Falha ao criar .zip
     pause & exit /b 1
