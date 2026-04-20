@@ -8,8 +8,30 @@ cd /d "%~dp0"
 echo Diretorio: %CD%
 echo.
 
+:: ── Localiza Python ───────────────────────────────────────────────────────
+set "PY="
+for %%P in (
+    "C:\Users\robso\AppData\Local\Programs\Python\Python312\python.exe"
+    "C:\Users\robso\AppData\Local\Programs\Python\Python311\python.exe"
+    "C:\Users\robso\AppData\Local\Programs\Python\Python310\python.exe"
+) do (
+    if not defined PY if exist %%P set "PY=%%~P"
+)
+if not defined PY (
+    for /f "delims=" %%P in ('where python 2^>nul') do (
+        if not defined PY echo %%P | findstr /i "WindowsApps" >nul || set "PY=%%P"
+    )
+)
+if not defined PY (
+    echo [ERRO] Python nao encontrado. Instale Python 3.10+ em:
+    echo   https://www.python.org/downloads/
+    pause & exit /b 1
+)
+echo [Python] %PY%
+echo.
+
 :: ── Lê versão do version.py ───────────────────────────────────────────────
-py -c "from version import VERSION; print(VERSION)" > "%TEMP%\sparta_ver.txt" 2>&1
+"%PY%" -c "from version import VERSION; print(VERSION)" > "%TEMP%\sparta_ver.txt" 2>&1
 if errorlevel 1 (
     echo [ERRO] Falha ao ler version.py:
     type "%TEMP%\sparta_ver.txt"
@@ -35,9 +57,9 @@ echo.
 
 :: ── ETAPA 1: Verificar Python ─────────────────────────────────────────────
 echo [1/6] Verificando Python...
-py --version >nul 2>&1
+"%PY%" --version >nul 2>&1
 if errorlevel 1 (
-    echo [ERRO] Python nao encontrado. Instale Python 3.10+
+    echo [ERRO] Python invalido: %PY%
     pause & exit /b 1
 )
 echo [OK]
@@ -73,8 +95,8 @@ if errorlevel 1 (
 
 :: ── ETAPA 3: Instalar dependencias Python ─────────────────────────────────
 echo [3/6] Instalando dependencias Python...
-py -m pip install --upgrade pip --quiet
-py -m pip install anthropic opencv-py py-dotenv requests pyinstaller pillow onvif-zeep --quiet
+"%PY%" -m pip install --upgrade pip --quiet
+"%PY%" -m pip install anthropic opencv-python python-dotenv requests pyinstaller pillow onvif-zeep --quiet
 if errorlevel 1 (
     echo [ERRO] Falha nas dependencias.
     pause & exit /b 1
@@ -88,7 +110,7 @@ echo.
 if exist "%DIST_DIR%"  rmdir /s /q "%DIST_DIR%"
 if exist "build\MonitorTapeteOuro" rmdir /s /q "build\MonitorTapeteOuro"
 
-py -m PyInstaller monitor_tapete.spec --noconfirm
+"%PY%" -m PyInstaller monitor_tapete.spec --noconfirm
 if errorlevel 1 (
     echo.
     echo [ERRO] Build PyInstaller falhou.
@@ -105,7 +127,7 @@ if exist "%ZIP_PATH%" del /f /q "%ZIP_PATH%"
 taskkill /f /im MonitorTapeteOuro.exe >nul 2>&1
 timeout /t 2 /nobreak >nul
 
-py -c "import zipfile,pathlib;src=pathlib.Path(r'%DIST_DIR%');out=pathlib.Path(r'%ZIP_PATH%');zf=zipfile.ZipFile(out,'w',zipfile.ZIP_DEFLATED,compresslevel=6);[zf.write(f,f.relative_to(src)) for f in src.rglob('*') if f.is_file()];zf.close();sz=round(out.stat().st_size/1048576,1);print(f'[OK] {out.name}  ({sz} MB)')"
+"%PY%" -c "import zipfile,pathlib;src=pathlib.Path(r'%DIST_DIR%');out=pathlib.Path(r'%ZIP_PATH%');zf=zipfile.ZipFile(out,'w',zipfile.ZIP_DEFLATED,compresslevel=6);[zf.write(f,f.relative_to(src)) for f in src.rglob('*') if f.is_file()];zf.close();sz=round(out.stat().st_size/1048576,1);print(f'[OK] {out.name}  ({sz} MB)')"
 if errorlevel 1 (
     echo [ERRO] Falha ao criar .zip
     pause & exit /b 1
