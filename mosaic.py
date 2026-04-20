@@ -223,14 +223,23 @@ class CameraSlot:
         while self._rodando:
             self._trocar.clear()
             uri = self._uri_ativo
+            # Libera cap anterior sem segurar o lock por muito tempo
             with self._lock:
-                if self._cap:
-                    self._cap.release()
-                self._cap = cv2.VideoCapture(uri)
-            self._cap.set(cv2.CAP_PROP_OPEN_TIMEOUT_MSEC, 8000)
-            self._cap.set(cv2.CAP_PROP_READ_TIMEOUT_MSEC, 8000)
-            self._cap.set(cv2.CAP_PROP_BUFFERSIZE, 1)
-            if not self._cap.isOpened():
+                old_cap = self._cap
+                self._cap = None
+            if old_cap:
+                try:
+                    old_cap.release()
+                except Exception:
+                    pass
+            # Cria novo cap FORA do lock — VideoCapture pode bloquear vários segundos
+            new_cap = cv2.VideoCapture(uri)
+            new_cap.set(cv2.CAP_PROP_OPEN_TIMEOUT_MSEC, 8000)
+            new_cap.set(cv2.CAP_PROP_READ_TIMEOUT_MSEC, 8000)
+            new_cap.set(cv2.CAP_PROP_BUFFERSIZE, 1)
+            with self._lock:
+                self._cap = new_cap
+            if not new_cap.isOpened():
                 log.warning("[%s] Stream não abriu — tentando em %.0fs", cam_id, atraso)
                 time.sleep(atraso)
                 atraso = min(atraso * 2, 30)
