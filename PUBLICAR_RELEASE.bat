@@ -67,26 +67,38 @@ echo.
 
 :: ── ETAPA 2: Verificar GitHub CLI ─────────────────────────────────────────
 echo [2/6] Verificando GitHub CLI (gh)...
-gh --version >nul 2>&1
-if errorlevel 1 (
-    echo [INFO] GitHub CLI nao encontrado. Instalando via winget...
-    winget install --id GitHub.cli --accept-package-agreements --accept-source-agreements --silent
-    if errorlevel 1 (
-        echo.
-        echo [ERRO] Nao foi possivel instalar o GitHub CLI.
-        echo Instale manualmente: https://cli.github.com
-        pause & exit /b 1
-    )
-    call RefreshEnv.cmd >nul 2>&1
+
+:: Localiza gh.exe nos caminhos conhecidos
+set "GH="
+for %%G in (
+    "C:\Program Files\GitHub CLI\gh.exe"
+    "C:\Program Files (x86)\GitHub CLI\gh.exe"
+) do ( if not defined GH if exist %%G set "GH=%%~G" )
+if not defined GH (
+    for /f "delims=" %%G in ('where gh 2^>nul') do if not defined GH set "GH=%%G"
 )
-echo [OK]
+
+if not defined GH (
+    echo [INFO] GitHub CLI nao encontrado. Instalando via winget...
+    winget install --id GitHub.cli --source winget --accept-package-agreements --accept-source-agreements --silent
+    :: Atualiza PATH manualmente apos instalacao
+    set "PATH=%PATH%;C:\Program Files\GitHub CLI"
+    for %%G in ("C:\Program Files\GitHub CLI\gh.exe") do if exist %%G set "GH=%%~G"
+)
+if not defined GH (
+    echo.
+    echo [ERRO] GitHub CLI nao encontrado apos instalacao.
+    echo Instale manualmente em https://cli.github.com e reabra o terminal.
+    pause & exit /b 1
+)
+echo [OK] %GH%
 echo.
 
 :: ── Verifica autenticação ─────────────────────────────────────────────────
-gh auth status >nul 2>&1
+"%GH%" auth status >nul 2>&1
 if errorlevel 1 (
     echo [INFO] Fazendo login no GitHub...
-    gh auth login
+    "%GH%" auth login
     if errorlevel 1 (
         echo [ERRO] Login cancelado.
         pause & exit /b 1
@@ -138,19 +150,19 @@ echo.
 echo [6/6] Publicando Release %TAG% no GitHub...
 echo.
 
-gh release view %TAG% >nul 2>&1
+"%GH%" release view %TAG% >nul 2>&1
 if not errorlevel 1 (
     echo [AVISO] Release %TAG% ja existe no GitHub.
     set /p "SOBRESCREVER=Deseja deletar e recriar? (s/N): "
     if /i "!SOBRESCREVER!"=="s" (
-        gh release delete %TAG% --yes --cleanup-tag
+        "%GH%" release delete %TAG% --yes --cleanup-tag
     ) else (
         echo Operacao cancelada.
         pause & exit /b 0
     )
 )
 
-gh release create %TAG% "%ZIP_PATH%" ^
+"%GH%" release create %TAG% "%ZIP_PATH%" ^
     --title "SPARTA AGENTE IA %TAG%" ^
     --notes "Release automatica gerada pelo PUBLICAR_RELEASE.bat" ^
     --repo Robsonhub/IVMS-RFSMART-
