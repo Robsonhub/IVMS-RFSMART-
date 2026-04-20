@@ -841,7 +841,7 @@ def _slot_camera(slot: CameraSlot, w: int, h: int,
         cv2.putText(img, cam_id, (4, bar_h - 4),
                     cv2.FONT_HERSHEY_SIMPLEX, escala, C_AMARELO, 1)
         if nivel:
-            fonte_tag = "L" if res.get("fonte") == "local" else "AI"
+            fonte_tag = "L" if res.get("fonte") == "local" else "IA"
             fonte_cor = (180, 130, 60) if fonte_tag == "L" else (80, 200, 120)
             r = max(4, bar_h // 3)
             cv2.circle(img, (w - r - 4, bar_h // 2), r, cor, -1)
@@ -1403,7 +1403,7 @@ def _menu_items(is_admin: bool) -> list:
     return [
         {"label": "Usuarios", "action": "usuarios", "cor": (185, 255, 195)},
         {"label": "Backup",   "action": "backup",   "cor": (255, 210, 160)},
-        {"label": "Update",   "action": "update",   "cor": (160, 210, 255)},
+        {"label": "Atualizar", "action": "update",   "cor": (160, 210, 255)},
         {"label": "Hardware", "action": "hardware", "cor": (210, 190, 255)},
         {"sep": True},
         {"label": "Treinar",  "action": "treinar",  "cor": (195, 240, 255)},
