@@ -3,6 +3,7 @@ import json
 import logging
 import os
 import shutil
+import subprocess
 import sys
 import tempfile
 import threading
@@ -69,7 +70,6 @@ def verificar_atualizacao() -> tuple[str, dict | str | None]:
         log.info("Versão atual (%s) já é a mais recente.", VERSION)
         return ("atualizado", None)
 
-    # Procura asset .zip na release
     url_download = None
     tamanho = 0
     for asset in data.get("assets", []):
@@ -90,23 +90,53 @@ def verificar_atualizacao() -> tuple[str, dict | str | None]:
     })
 
 
-def baixar_e_aplicar(info: dict, progresso_cb=None) -> bool:
+def _lançar_bat_updater(zip_path: str, app_dir: Path, versao: str) -> bool:
+    """Escreve bat no temp e o lança como processo independente para extrair após o app fechar."""
+    exe = str(Path(sys.executable))
+    bat_path = Path(tempfile.gettempdir()) / "sparta_updater.bat"
+
+    conteudo = (
+        "@echo off\n"
+        "timeout /t 4 /nobreak >nul\n"
+        f"powershell -NoProfile -Command \""
+        f"Expand-Archive -LiteralPath '{zip_path}' "
+        f"-DestinationPath '{app_dir}' -Force\"\n"
+        f"start \"\" \"{exe}\"\n"
+        f"del \"{zip_path}\"\n"
+        "del \"%~f0\"\n"
+    )
+    try:
+        bat_path.write_text(conteudo, encoding="utf-8")
+        subprocess.Popen(
+            ["cmd", "/c", str(bat_path)],
+            creationflags=subprocess.DETACHED_PROCESS | subprocess.CREATE_NEW_PROCESS_GROUP,
+        )
+        log.info("Atualizador lançado — app encerrará para aplicar v%s", versao)
+        return True
+    except Exception as exc:
+        log.error("Falha ao lançar bat updater: %s", exc)
+        return False
+
+
+def baixar_e_aplicar(info: dict, progresso_cb=None) -> bool | str:
     """
-    Baixa o .zip da release e extrai sobre a pasta do projeto.
-    progresso_cb(pct: float) chamado durante download (0.0 a 1.0).
-    Retorna True se aplicado com sucesso.
+    Baixa o .zip da release e aplica a atualização.
+    - Modo frozen (PyInstaller): lança bat externo e retorna "restart"
+    - Modo dev: extrai diretamente e retorna True
+    - Falha: retorna False
     """
-    url      = info["url_download"]
-    versao   = info["versao"]
-    app_dir  = Path(sys.executable).parent if getattr(sys, "frozen", False) else Path(".")
+    url     = info["url_download"]
+    versao  = info["versao"]
+    frozen  = getattr(sys, "frozen", False)
+    app_dir = Path(sys.executable).parent if frozen else Path(".")
 
     log.info("Baixando atualização %s de %s", versao, url)
     try:
         with requests.get(url, stream=True, timeout=60) as r:
             r.raise_for_status()
-            total = int(r.headers.get("content-length", 0)) or info.get("tamanho", 1)
-            baixado = 0
-            tmp = tempfile.NamedTemporaryFile(suffix=".zip", delete=False)
+            total    = int(r.headers.get("content-length", 0)) or info.get("tamanho", 1)
+            baixado  = 0
+            tmp      = tempfile.NamedTemporaryFile(suffix=".zip", delete=False)
             for chunk in r.iter_content(chunk_size=65536):
                 tmp.write(chunk)
                 baixado += len(chunk)
@@ -117,7 +147,12 @@ def baixar_e_aplicar(info: dict, progresso_cb=None) -> bool:
         log.error("Falha no download: %s", exc)
         return False
 
-    # Backup da pasta atual antes de extrair
+    # App frozen: não pode sobrescrever o próprio exe — usa bat externo
+    if frozen:
+        ok = _lançar_bat_updater(tmp.name, app_dir, versao)
+        return "restart" if ok else False
+
+    # Dev mode: extrai diretamente
     backup_dir = app_dir / f"_backup_pre_update_{VERSION}"
     try:
         if backup_dir.exists():
@@ -128,11 +163,11 @@ def baixar_e_aplicar(info: dict, progresso_cb=None) -> bool:
     except Exception as exc:
         log.warning("Backup pré-update falhou (não crítico): %s", exc)
 
-    # Extrai o zip
     try:
         with zipfile.ZipFile(tmp.name, "r") as zf:
             zf.extractall(app_dir)
         log.info("Update %s aplicado com sucesso.", versao)
+        return True
     except Exception as exc:
         log.error("Falha ao extrair update: %s", exc)
         return False
@@ -142,8 +177,6 @@ def baixar_e_aplicar(info: dict, progresso_cb=None) -> bool:
         except Exception:
             pass
 
-    return True
-
 
 def abrir_dialog_update(parent_tk=None):
     """Abre janela Tkinter mostrando status de update."""
@@ -152,12 +185,10 @@ def abrir_dialog_update(parent_tk=None):
 
     BG    = "#0F0F0F"
     AMA   = "#FFD000"
-    AESC  = "#B39200"
     BCOR  = "#F0F0F0"
     CINZA = "#888888"
     VERM  = "#FF4444"
     VERDE = "#3DCC7E"
-    AZUL  = "#336699"
 
     root = tk.Toplevel(parent_tk) if parent_tk else tk.Tk()
     root.title(f"{APP_NAME} — Atualização")
@@ -166,7 +197,6 @@ def abrir_dialog_update(parent_tk=None):
     root.attributes("-topmost", True)
     root.grab_set()
 
-    # Cabeçalho
     cab = tk.Frame(root, bg=AMA, padx=16, pady=8)
     cab.pack(fill="x")
     tk.Label(cab, text="Verificar Atualização",
@@ -177,7 +207,6 @@ def abrir_dialog_update(parent_tk=None):
     corpo = tk.Frame(root, bg=BG, padx=24, pady=16)
     corpo.pack(fill="both")
 
-    # Ícone + status
     sv_icone  = tk.StringVar(value="⏳")
     sv_status = tk.StringVar(value="Verificando atualizações...")
     sv_sub    = tk.StringVar(value="")
@@ -198,7 +227,6 @@ def abrir_dialog_update(parent_tk=None):
                        wraplength=300, justify="left")
     lbl_sub.pack(anchor="w")
 
-    # Barra de progresso
     frm_prog = tk.Frame(corpo, bg=BG)
     frm_prog.pack(fill="x", pady=(0, 8))
     canvas_prog = tk.Canvas(frm_prog, bg="#222222", height=6,
@@ -210,13 +238,11 @@ def abrir_dialog_update(parent_tk=None):
         w = canvas_prog.winfo_width()
         canvas_prog.coords(barra, 0, 0, int(w * pct), 6)
 
-    # Notas da release
     sv_notas = tk.StringVar(value="")
     lbl_notas = tk.Label(corpo, textvariable=sv_notas, font=("Consolas", 8),
                          bg="#1A1A1A", fg="#AAAAAA", wraplength=360,
                          justify="left", padx=8, pady=6)
 
-    # Botões
     frm_btns = tk.Frame(corpo, bg=BG)
     frm_btns.pack(fill="x", pady=(10, 0))
 
@@ -236,6 +262,16 @@ def abrir_dialog_update(parent_tk=None):
                 pass
         root.destroy()
 
+    def _fechar_para_update():
+        """Fecha o app inteiro para o bat updater aplicar a atualização."""
+        _fechar()
+        if parent_tk:
+            try:
+                parent_tk.destroy()
+            except Exception:
+                pass
+        os._exit(0)
+
     btn_fechar = tk.Label(frm_btns, text="  Fechar  ",
                           font=("Segoe UI", 9),
                           bg="#333333", fg=BCOR, padx=12, pady=6, cursor="hand2")
@@ -244,7 +280,6 @@ def abrir_dialog_update(parent_tk=None):
     btn_fechar.bind("<Leave>", lambda _: btn_fechar.config(bg="#333333"))
     btn_fechar.pack(side="right")
 
-    # Fila thread → UI
     _q: _queue.Queue = _queue.Queue()
     _info = [None]
 
@@ -264,11 +299,13 @@ def abrir_dialog_update(parent_tk=None):
                 elif tipo == "disponivel":
                     info = dados
                     _info[0] = info
-                    tam = info["tamanho"] / 1_048_576
                     sv_notas.set(info["notas"] if info["notas"] else "(sem notas de versão)")
                     lbl_notas.pack(fill="x", pady=(0, 8))
                     btn_instalar.pack(side="left")
                     btn_instalar.bind("<Button-1>", lambda _: _instalar())
+                elif tipo == "restart":
+                    # App vai fechar em 3s para o bat aplicar a atualização
+                    root.after(3000, _fechar_para_update)
         except _queue.Empty:
             pass
         try:
@@ -286,7 +323,12 @@ def abrir_dialog_update(parent_tk=None):
                 _info[0],
                 progresso_cb=lambda p: _q.put(("progresso", p))
             )
-            if ok:
+            if ok == "restart":
+                _q.put(("status", ("🔄", "Atualização baixada!",
+                                   "O sistema fechará em 3s e reabrirá atualizado.", VERDE)))
+                _q.put(("progresso", 1.0))
+                _q.put(("restart", None))
+            elif ok:
                 _q.put(("status", ("✅", f"Atualização v{_info[0]['versao']} instalada!",
                                    "Feche e reinicie o sistema para aplicar.", VERDE)))
                 _q.put(("progresso", 1.0))
@@ -309,7 +351,7 @@ def abrir_dialog_update(parent_tk=None):
                 _q.put(("status", ("ℹ️", "Nenhuma versão publicada no GitHub.",
                                    "Aguarde a publicação de uma release.", CINZA)))
             elif status == "atualizado":
-                _q.put(("status", ("✅", f"Você está na versão mais recente!",
+                _q.put(("status", ("✅", "Você está na versão mais recente!",
                                    f"Versão instalada: v{VERSION}", VERDE)))
             elif status == "disponivel":
                 info = dado
