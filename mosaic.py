@@ -136,16 +136,16 @@ _MENU_DROP_PAD_V = 8   # padding vertical interno
 _MENU_DROP_PAD_H = 14  # padding horizontal do texto
 
 # Cores BGR — paleta RRF Smart Security (ouro/preto)
-C_BG      = ( 10,   8,  12)   # preto profundo com leve tom quente
-C_CARD    = ( 22,  20,  26)   # cards escuros
-C_AMARELO = (  0, 200, 255)   # dourado principal (#FFC800 RGB)
-C_OURO2   = (  0, 140, 200)   # dourado secundário (mais escuro)
-C_BRANCO  = (235, 235, 235)
-C_CINZA   = (110, 110, 120)
-C_VERDE   = ( 60, 200,  80)   # verde OK vivo
-C_VERM    = ( 50,  50, 220)   # vermelho alerta
-C_LARAN   = (  0, 120, 255)   # laranja suspeito
-C_AZUL    = (180, 100,  20)   # azul tech (BGR)
+C_BG      = ( 18,  10,   5)   # preto naval (#050A12)
+C_CARD    = ( 30,  19,   8)   # navy escuro (#08131E)
+C_AMARELO = (255, 212,   0)   # ciano elétrico (#00D4FF)
+C_OURO2   = (158, 122,   0)   # ciano profundo (#007A9E)
+C_BRANCO  = (248, 232, 200)   # branco azulado (#C8E8F8)
+C_CINZA   = (112,  96,  74)   # cinza-azul (#4A6070)
+C_VERDE   = (119, 204,   0)   # verde ciano (#00CC77)
+C_VERM    = ( 85,  34, 255)   # vermelho frio (#FF2255)
+C_LARAN   = (153,  68, 255)   # magenta-rosa (#FF4499)
+C_AZUL    = (238, 153,   0)   # azul info (#0099EE)
 
 NIVEL_COR = {
     "sem_risco": C_VERDE,
@@ -595,19 +595,19 @@ class FilaAnalise:
 
 # ── Renderizacao dos slots ────────────────────────────────────────────────────
 def _slot_vazio(idx: int, hover: bool, w: int, h: int) -> np.ndarray:
-    bg = (28, 24, 32) if hover else C_CARD
+    bg = (40, 22, 12) if hover else C_CARD
     img = np.full((h, w, 3), bg, dtype=np.uint8)
 
     # Grid pontilhado de fundo (estilo HUD)
     dot_step = max(16, min(28, min(w, h) // 10))
-    dot_cor  = (45, 40, 52) if not hover else (60, 55, 70)
+    dot_cor  = (38, 22, 10) if not hover else (55, 35, 18)
     for gx in range(dot_step, w - 1, dot_step):
         for gy in range(dot_step, h - 1, dot_step):
             cv2.circle(img, (gx, gy), 1, dot_cor, -1)
 
     # Colchetes de canto (estilo tático)
     arm   = max(10, min(24, min(w, h) // 8))
-    borda = C_AMARELO if hover else (70, 65, 80)
+    borda = C_AMARELO if hover else (90, 70, 30)
     thick = 2 if hover else 1
     for px, py, dx, dy in [(1, 1, 1, 0), (w-2, 1, -1, 0),
                             (1, h-2, 1, 0), (w-2, h-2, -1, 0)]:

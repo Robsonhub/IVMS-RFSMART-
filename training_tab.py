@@ -11,17 +11,17 @@ from tkinter import ttk
 import db
 
 # ── Paleta ─────────────────────────────────────────────────────────────────────
-BG          = "#0F0F0F"
-BG_CARD     = "#1A1A1A"
-AMARELO     = "#FFD000"
-AMARELO_ESC = "#B39200"
-BRANCO      = "#F0F0F0"
-CINZA       = "#888888"
-CINZA_ESC   = "#333333"
-VERMELHO    = "#FF4444"
-VERDE       = "#3DCC7E"
-LARANJA     = "#FF6400"
-AZUL        = "#4A9EFF"
+BG          = "#050A12"
+BG_CARD     = "#08131E"
+AMARELO     = "#00D4FF"
+AMARELO_ESC = "#007A9E"
+BRANCO      = "#C8E8F8"
+CINZA       = "#4A6070"
+CINZA_ESC   = "#152030"
+VERMELHO    = "#FF2255"
+VERDE       = "#00CC77"
+LARANJA     = "#FF4499"
+AZUL        = "#2299FF"
 
 NIVEL_COR = {
     "sem_risco": VERDE,
@@ -111,7 +111,7 @@ class ChatDialog:
         frm_hist.pack(fill="both", expand=True, padx=10, pady=(8, 0))
 
         self._txt_hist = tk.Text(
-            frm_hist, bg="#111111", fg=BRANCO, font=("Segoe UI", 9),
+            frm_hist, bg="#060D16", fg=BRANCO, font=("Segoe UI", 9),
             wrap="word", state="disabled", relief="flat",
             highlightthickness=1, highlightbackground=CINZA_ESC,
             spacing1=4, spacing3=4,
@@ -131,7 +131,7 @@ class ChatDialog:
         frm_input.pack(fill="x", padx=10, pady=(4, 0))
 
         self._txt_input = tk.Text(
-            frm_input, bg="#242424", fg=BRANCO, font=("Segoe UI", 9),
+            frm_input, bg="#0C1825", fg=BRANCO, font=("Segoe UI", 9),
             height=3, wrap="word", relief="flat",
             insertbackground=AMARELO,
             highlightthickness=1, highlightbackground=CINZA_ESC,
@@ -564,11 +564,11 @@ class TrainingTab:
 
         tk.Label(row2, text="De:", font=FONT_LABEL, bg=BG_CARD, fg=CINZA).pack(side="left")
         tk.Entry(row2, textvariable=self._filtro_data_inicio, font=FONT_MONO,
-                 bg="#242424", fg=BRANCO, insertbackground=AMARELO,
+                 bg="#0C1825", fg=BRANCO, insertbackground=AMARELO,
                  relief="flat", width=11).pack(side="left", padx=(4, 8))
         tk.Label(row2, text="Até:", font=FONT_LABEL, bg=BG_CARD, fg=CINZA).pack(side="left")
         tk.Entry(row2, textvariable=self._filtro_data_fim, font=FONT_MONO,
-                 bg="#242424", fg=BRANCO, insertbackground=AMARELO,
+                 bg="#0C1825", fg=BRANCO, insertbackground=AMARELO,
                  relief="flat", width=11).pack(side="left", padx=(4, 0))
         tk.Label(row2, text="(AAAA-MM-DD)", font=FONT_SMALL,
                  bg=BG_CARD, fg=CINZA).pack(side="left", padx=(6, 0))
@@ -662,7 +662,7 @@ class TrainingTab:
         frm_obs = tk.Frame(painel, bg=BG_CARD)
         frm_obs.pack(fill="x")
         self._text_obs = tk.Text(
-            frm_obs, font=FONT_MONO, bg="#242424", fg=BRANCO,
+            frm_obs, font=FONT_MONO, bg="#0C1825", fg=BRANCO,
             insertbackground=AMARELO, relief="flat",
             highlightthickness=1, highlightbackground=CINZA_ESC,
             height=4, wrap="word",
@@ -1021,7 +1021,7 @@ class TrainingTab:
         frm_txt = tk.Frame(card, bg=BG_CARD)
         frm_txt.pack(fill="x")
         txt = tk.Text(
-            frm_txt, font=("Segoe UI", 9), bg="#242424", fg=BRANCO,
+            frm_txt, font=("Segoe UI", 9), bg="#0C1825", fg=BRANCO,
             insertbackground=AMARELO, height=3, wrap="word", relief="flat",
             highlightthickness=1, highlightbackground=CINZA_ESC,
         )

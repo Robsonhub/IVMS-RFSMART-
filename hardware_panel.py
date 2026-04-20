@@ -14,18 +14,18 @@ from pathlib import Path
 
 log = logging.getLogger(__name__)
 
-BG      = "#0F0F0F"
-BG_CARD = "#141414"
-BG_ROW  = "#1A1A1A"
-AMA     = "#FFD000"
-AESC    = "#B39200"
-BCOR    = "#F0F0F0"
-CINZA   = "#888888"
-CESC    = "#2A2A2A"
-VERDE   = "#3DCC7E"
-VERM    = "#FF4444"
-LARANJA = "#FF9900"
-AZUL    = "#4488CC"
+BG      = "#050A12"
+BG_CARD = "#06101A"
+BG_ROW  = "#08131E"
+AMA     = "#00D4FF"
+AESC    = "#007A9E"
+BCOR    = "#C8E8F8"
+CINZA   = "#4A6070"
+CESC    = "#152030"
+VERDE   = "#00CC77"
+VERM    = "#FF2255"
+LARANJA = "#FF4499"
+AZUL    = "#2277EE"
 
 FONT_T  = ("Segoe UI", 11, "bold")
 FONT_L  = ("Segoe UI", 9)
@@ -295,7 +295,7 @@ def abrir_hardware_panel():
     tk.Label(cab, textvariable=sv_ts, font=FONT_S, bg=AMA, fg="#666600").pack(side="right")
 
     # ── Rodapé fixo ───────────────────────────────────────────────────────────
-    frm_rod = tk.Frame(root, bg="#111111", padx=20, pady=8)
+    frm_rod = tk.Frame(root, bg="#04080F", padx=20, pady=8)
     frm_rod.pack(fill="x", side="bottom")
     tk.Frame(frm_rod, bg=CESC, height=1).pack(fill="x", pady=(0, 6))
 
@@ -322,7 +322,7 @@ def abrir_hardware_panel():
 
     sv_auto = tk.StringVar(value="● Atualizando automaticamente (2s)")
     tk.Label(frm_rod, textvariable=sv_auto, font=FONT_XS,
-             bg="#111111", fg="#445544").pack(side="left")
+             bg="#04080F", fg="#445544").pack(side="left")
 
     # ── Corpo com rolagem ─────────────────────────────────────────────────────
     frm_scroll = tk.Frame(root, bg=BG)
@@ -376,7 +376,7 @@ def abrir_hardware_panel():
         return lbl  # retorna para permitir mudar fg dinamicamente
 
     def _barra(pai, sv_pct: tk.DoubleVar, cor_var: list) -> tk.Canvas:
-        c = tk.Canvas(pai, bg="#1E1E1E", height=5,
+        c = tk.Canvas(pai, bg="#08131E", height=5,
                       highlightthickness=0, relief="flat")
         c.pack(fill="x", pady=(2, 6))
         barra = c.create_rectangle(0, 0, 0, 5, fill=VERDE, outline="")

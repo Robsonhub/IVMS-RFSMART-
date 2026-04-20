@@ -5,15 +5,15 @@ from tkinter import messagebox
 
 import auth
 
-BG   = "#0F0F0F"
-AMA  = "#FFD000"
-AESC = "#B39200"
-ENT  = "#242424"
-BCOR = "#F0F0F0"
-CESC = "#333333"
-VERM = "#FF4444"
-VERDE= "#3DCC7E"
-AZUL = "#336699"
+BG   = "#050A12"
+AMA  = "#00D4FF"
+AESC = "#007A9E"
+ENT  = "#0C1825"
+BCOR = "#C8E8F8"
+CESC = "#152030"
+VERM = "#FF2255"
+VERDE= "#00CC77"
+AZUL = "#2277EE"
 
 
 def _centralizar(win: tk.Tk | tk.Toplevel):

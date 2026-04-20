@@ -7,16 +7,16 @@ import tkinter as tk
 from pathlib import Path
 
 # ── Paleta ────────────────────────────────────────────────────────────────────
-BG          = "#0F0F0F"
-BG_CARD     = "#1A1A1A"
-BG_ENTRY    = "#242424"
-AMARELO     = "#FFD000"
-AMARELO_ESC = "#B39200"
-BRANCO      = "#F0F0F0"
-CINZA       = "#888888"
-CINZA_ESC   = "#333333"
-VERMELHO    = "#FF4444"
-VERDE       = "#44CC88"
+BG          = "#050A12"
+BG_CARD     = "#08131E"
+BG_ENTRY    = "#0C1825"
+AMARELO     = "#00D4FF"
+AMARELO_ESC = "#007A9E"
+BRANCO      = "#C8E8F8"
+CINZA       = "#4A6070"
+CINZA_ESC   = "#152030"
+VERMELHO    = "#FF2255"
+VERDE       = "#00CC77"
 
 FONT_TITULO = ("Segoe UI", 14, "bold")
 FONT_SUBTIT = ("Segoe UI", 8)
