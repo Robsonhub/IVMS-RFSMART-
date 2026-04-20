@@ -169,6 +169,13 @@ def _promover_para_fewshot(analise_id: int, rotulo: str):
     if not row:
         return
 
+    # Busca observação do feedback para enriquecer o exemplo
+    fb_row = conn.execute(
+        "SELECT observacao FROM feedbacks WHERE analise_id=? ORDER BY created_at DESC LIMIT 1",
+        (analise_id,)
+    ).fetchone()
+    obs = (fb_row["observacao"] or "").strip() if fb_row else ""
+
     label = "verdadeiro_positivo" if rotulo == "correto" else "falso_positivo"
     comps = row["comportamentos"]
     descricao = (
@@ -176,6 +183,8 @@ def _promover_para_fewshot(analise_id: int, rotulo: str):
         f"Comportamentos: {comps}. "
         f"Acao: {row['acao_recomendada'] or 'N/A'}"
     )
+    if obs:
+        descricao += f". Contexto real (operador): {obs[:400]}"
 
     with _lock:
         existente = conn.execute(

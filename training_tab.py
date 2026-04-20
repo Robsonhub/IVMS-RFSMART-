@@ -20,6 +20,7 @@ CINZA_ESC   = "#333333"
 VERMELHO    = "#FF4444"
 VERDE       = "#3DCC7E"
 LARANJA     = "#FF6400"
+AZUL        = "#4A9EFF"
 
 NIVEL_COR = {
     "sem_risco": VERDE,
@@ -39,7 +40,8 @@ def _btn(pai, texto, cmd, bg=AMARELO, fg=BG):
     hover = AMARELO_ESC if bg == AMARELO else (
         "#4a4a4a" if bg == CINZA_ESC else
         "#2eaa60" if bg == VERDE else
-        "#cc2222" if bg == VERMELHO else bg
+        "#cc2222" if bg == VERMELHO else
+        "#2e7acc" if bg == AZUL else bg
     )
     b = tk.Label(pai, text=texto, font=FONT_BTN,
                  bg=bg, fg=fg, padx=12, pady=7, cursor="hand2")
@@ -49,6 +51,194 @@ def _btn(pai, texto, cmd, bg=AMARELO, fg=BG):
     return b
 
 
+# ── Diálogo de Chat com IA ─────────────────────────────────────────────────────
+
+class ChatDialog:
+    """Janela de conversa livre com a IA sobre uma análise específica."""
+
+    _SYSTEM = (
+        "Você é o assistente de calibração do SPARTA AGENTE IA, sistema de vigilância "
+        "para garimpo de ouro. Sua função é ajudar o operador a explicar o que "
+        "realmente aconteceu em uma cena detectada pela câmera, para que o sistema "
+        "aprenda corretamente. Faça perguntas claras e objetivas quando precisar de "
+        "mais detalhes. Responda sempre em português brasileiro. Seja conciso."
+    )
+
+    def __init__(self, parent: tk.Misc, analise: dict, on_salvar_obs=None):
+        self._on_salvar_obs = on_salvar_obs
+        self._historico: list[dict] = []
+        self._analise = analise
+
+        self._win = tk.Toplevel(parent)
+        self._win.title("Conversar com IA — Explicar Ocorrência")
+        self._win.configure(bg=BG)
+        self._win.geometry("680x540")
+        self._win.resizable(True, True)
+        self._win.grab_set()
+        self._win.attributes("-topmost", True)
+
+        self._montar_ui()
+        self._mensagem_inicial()
+
+    def _montar_ui(self):
+        a = self._analise
+        comps = json.loads(a["comportamentos"]) if a.get("comportamentos") else []
+        resumo = (
+            f"Câmera: {a.get('camera_id','?')}  |  "
+            f"{str(a.get('timestamp_analise',''))[:19]}  |  "
+            f"Nível: {a.get('nivel_risco','?').upper()}  |  "
+            f"Confiança: {a.get('confianca',0)*100:.0f}%"
+        )
+
+        # Cabeçalho
+        cab = tk.Frame(self._win, bg=AMARELO, padx=16, pady=8)
+        cab.pack(fill="x")
+        tk.Label(cab, text="Conversar com IA sobre esta análise",
+                 font=("Segoe UI", 10, "bold"), bg=AMARELO, fg=BG).pack(side="left")
+
+        # Contexto
+        ctx = tk.Frame(self._win, bg=BG_CARD, padx=14, pady=8)
+        ctx.pack(fill="x")
+        tk.Label(ctx, text=resumo, font=FONT_MONO, bg=BG_CARD, fg=CINZA).pack(anchor="w")
+        if comps:
+            desc = " | ".join(comps[:2]) + ("..." if len(comps) > 2 else "")
+            tk.Label(ctx, text=f"Detectado: {desc}", font=FONT_SMALL,
+                     bg=BG_CARD, fg=BRANCO, wraplength=640, justify="left").pack(anchor="w")
+
+        # Histórico do chat
+        frm_hist = tk.Frame(self._win, bg=BG)
+        frm_hist.pack(fill="both", expand=True, padx=10, pady=(8, 0))
+
+        self._txt_hist = tk.Text(
+            frm_hist, bg="#111111", fg=BRANCO, font=("Segoe UI", 9),
+            wrap="word", state="disabled", relief="flat",
+            highlightthickness=1, highlightbackground=CINZA_ESC,
+            spacing1=4, spacing3=4,
+        )
+        sb_hist = ttk.Scrollbar(frm_hist, orient="vertical",
+                                command=self._txt_hist.yview)
+        self._txt_hist.configure(yscrollcommand=sb_hist.set)
+        sb_hist.pack(side="right", fill="y")
+        self._txt_hist.pack(fill="both", expand=True)
+
+        self._txt_hist.tag_configure("ia",  foreground=AMARELO, font=("Segoe UI", 9, "bold"))
+        self._txt_hist.tag_configure("vc",  foreground=VERDE,   font=("Segoe UI", 9, "bold"))
+        self._txt_hist.tag_configure("msg", foreground=BRANCO,  font=("Segoe UI", 9))
+
+        # Área de digitação
+        frm_input = tk.Frame(self._win, bg=BG_CARD, padx=10, pady=8)
+        frm_input.pack(fill="x", padx=10, pady=(4, 0))
+
+        self._txt_input = tk.Text(
+            frm_input, bg="#242424", fg=BRANCO, font=("Segoe UI", 9),
+            height=3, wrap="word", relief="flat",
+            insertbackground=AMARELO,
+            highlightthickness=1, highlightbackground=CINZA_ESC,
+        )
+        self._txt_input.pack(fill="x")
+        self._txt_input.bind("<Return>", self._on_enter)
+        self._txt_input.bind("<Shift-Return>", lambda e: None)
+
+        # Botões
+        frm_btns = tk.Frame(self._win, bg=BG, padx=10, pady=8)
+        frm_btns.pack(fill="x")
+
+        _btn(frm_btns, "  Enviar  ", self._enviar,
+             bg=AMARELO, fg=BG).pack(side="left")
+        tk.Label(frm_btns, text="Enter envia  |  Shift+Enter nova linha",
+                 font=FONT_SMALL, bg=BG, fg=CINZA).pack(side="left", padx=10)
+
+        self._btn_salvar = _btn(frm_btns, "  Salvar como Observação  ",
+                                self._salvar_obs, bg=VERDE, fg=BG)
+        self._btn_salvar.pack(side="right", padx=(0, 4))
+        self._btn_salvar.pack_forget()
+
+        _btn(frm_btns, "  Fechar  ", self._win.destroy,
+             bg=CINZA_ESC, fg=BRANCO).pack(side="right", padx=(0, 6))
+
+    def _mensagem_inicial(self):
+        a = self._analise
+        comps = json.loads(a["comportamentos"]) if a.get("comportamentos") else []
+        nivel = a.get("nivel_risco", "atencao").upper()
+
+        msg_ia = (
+            f"Analisei esta cena e classifiquei como **{nivel}** "
+            f"com {a.get('confianca',0)*100:.0f}% de confiança.\n\n"
+            f"Comportamentos detectados:\n" +
+            "\n".join(f"• {c}" for c in comps) +
+            "\n\nO que realmente estava acontecendo neste momento? "
+            "Pode descrever com suas próprias palavras."
+        )
+        self._adicionar_mensagem("IA", msg_ia)
+        self._historico.append({"role": "assistant", "content": msg_ia})
+
+    def _on_enter(self, event):
+        if not (event.state & 0x1):  # Shift não pressionado
+            self._enviar()
+            return "break"
+
+    def _enviar(self):
+        texto = self._txt_input.get("1.0", "end-1c").strip()
+        if not texto:
+            return
+        self._txt_input.delete("1.0", "end")
+        self._adicionar_mensagem("Você", texto)
+        self._historico.append({"role": "user", "content": texto})
+        threading.Thread(target=self._chamar_ia, daemon=True).start()
+
+    def _chamar_ia(self):
+        try:
+            from config import CLAUDE_API_KEY
+            import anthropic as _ant
+            client = _ant.Anthropic(api_key=CLAUDE_API_KEY)
+
+            a = self._analise
+            comps = json.loads(a["comportamentos"]) if a.get("comportamentos") else []
+            contexto = (
+                f"Análise: câmera={a.get('camera_id')}, "
+                f"nível={a.get('nivel_risco')}, "
+                f"confiança={a.get('confianca',0)*100:.0f}%, "
+                f"comportamentos detectados: {'; '.join(comps)}, "
+                f"ação recomendada: {a.get('acao_recomendada','N/A')}"
+            )
+            system = f"{self._SYSTEM}\n\nContexto da análise em debate:\n{contexto}"
+
+            resp = client.messages.create(
+                model="claude-haiku-4-5-20251001",
+                max_tokens=512,
+                system=system,
+                messages=self._historico,
+            )
+            resposta = resp.content[0].text
+            self._historico.append({"role": "assistant", "content": resposta})
+            self._win.after(0, lambda: self._adicionar_mensagem("IA", resposta))
+            self._win.after(0, lambda: self._btn_salvar.pack(side="right", padx=(0, 4)))
+        except Exception as exc:
+            self._win.after(0, lambda: self._adicionar_mensagem(
+                "IA", f"Erro ao conectar com a IA: {exc}"))
+
+    def _adicionar_mensagem(self, remetente: str, texto: str):
+        self._txt_hist.configure(state="normal")
+        tag = "ia" if remetente == "IA" else "vc"
+        self._txt_hist.insert("end", f"{remetente}:\n", tag)
+        self._txt_hist.insert("end", f"{texto}\n\n", "msg")
+        self._txt_hist.configure(state="disabled")
+        self._txt_hist.see("end")
+
+    def _salvar_obs(self):
+        # Monta resumo da conversa para a observação
+        linhas = []
+        for m in self._historico:
+            role = "IA" if m["role"] == "assistant" else "Operador"
+            linhas.append(f"[{role}] {m['content']}")
+        resumo = "\n".join(linhas)
+        if self._on_salvar_obs:
+            self._on_salvar_obs(resumo)
+        self._win.destroy()
+
+
+# ── TrainingTab ────────────────────────────────────────────────────────────────
+
 class TrainingTab:
     def __init__(self, root: tk.Tk):
         self._root = root
@@ -57,7 +247,6 @@ class TrainingTab:
         self._filtro_camera       = tk.StringVar(value="todas")
         self._filtro_data_inicio  = tk.StringVar(value="")
         self._filtro_data_fim     = tk.StringVar(value="")
-        self._obs_var             = tk.StringVar()
 
         root.title("SPARTA AGENTE IA — Treinamento de IA")
         root.configure(bg=BG)
@@ -84,13 +273,11 @@ class TrainingTab:
     # ── Corpo ──────────────────────────────────────────────────────────────────
 
     def _montar_corpo(self):
-        # Topo: filtros + estatisticas
         topo = tk.Frame(self._root, bg=BG_CARD, padx=16, pady=10)
         topo.pack(fill="x")
         self._montar_filtros(topo)
         self._montar_estatisticas_resumidas(topo)
 
-        # Notebook
         style = ttk.Style()
         style.theme_use("clam")
         style.configure("TNotebook", background=BG, borderwidth=0)
@@ -183,7 +370,6 @@ class TrainingTab:
     # ── Aba 1: Detecções ───────────────────────────────────────────────────────
 
     def _montar_aba_deteccoes(self, pai):
-        # Treeview
         cols = ("hora", "camera", "nivel", "confianca", "feedback")
         self._tree = ttk.Treeview(pai, columns=cols, show="headings", height=14)
 
@@ -210,7 +396,7 @@ class TrainingTab:
         self._tree.bind("<<TreeviewSelect>>", self._on_selecionar)
 
         # Painel de detalhes + feedback
-        painel = tk.Frame(pai, bg=BG_CARD, padx=16, pady=14, width=310)
+        painel = tk.Frame(pai, bg=BG_CARD, padx=16, pady=14, width=320)
         painel.pack(side="left", fill="y", padx=8, pady=8)
         painel.pack_propagate(False)
 
@@ -234,24 +420,43 @@ class TrainingTab:
         _btn(brow, "Falso Positivo", lambda: self._salvar_feedback("falso_positivo"),
              bg=VERMELHO, fg=BRANCO).pack(side="left", expand=True, fill="x")
 
-        tk.Label(painel, text="Observacao (opcional):", font=FONT_LABEL,
-                 bg=BG_CARD, fg=CINZA).pack(anchor="w", pady=(6, 2))
-        self._entry_obs = tk.Entry(painel, textvariable=self._obs_var,
-                                   font=FONT_MONO, bg="#242424", fg=BRANCO,
-                                   insertbackground=AMARELO, relief="flat",
-                                   highlightthickness=1,
-                                   highlightbackground=CINZA_ESC)
-        self._entry_obs.pack(fill="x", ipady=5)
+        # Botão de chat com IA
+        _btn(painel, "  Conversar com IA sobre esta ocorrência  ",
+             self._abrir_chat, bg=AZUL, fg=BRANCO).pack(fill="x", pady=(2, 8))
+
+        tk.Frame(painel, bg=CINZA_ESC, height=1).pack(fill="x", pady=(0, 8))
+
+        tk.Label(painel, text="Observação / Explicação:",
+                 font=FONT_LABEL, bg=BG_CARD, fg=CINZA).pack(anchor="w", pady=(0, 2))
+        tk.Label(painel,
+                 text="Descreva o que realmente acontecia na cena.",
+                 font=FONT_SMALL, bg=BG_CARD, fg=CINZA, wraplength=270,
+                 justify="left").pack(anchor="w", pady=(0, 4))
+
+        # Campo de texto multi-linha para observação
+        frm_obs = tk.Frame(painel, bg=BG_CARD)
+        frm_obs.pack(fill="x")
+        self._text_obs = tk.Text(
+            frm_obs, font=FONT_MONO, bg="#242424", fg=BRANCO,
+            insertbackground=AMARELO, relief="flat",
+            highlightthickness=1, highlightbackground=CINZA_ESC,
+            height=4, wrap="word",
+        )
+        sb_obs = ttk.Scrollbar(frm_obs, orient="vertical",
+                               command=self._text_obs.yview)
+        self._text_obs.configure(yscrollcommand=sb_obs.set)
+        sb_obs.pack(side="right", fill="y")
+        self._text_obs.pack(fill="x")
 
         self._sv_fb_status = tk.StringVar(value="")
         tk.Label(painel, textvariable=self._sv_fb_status,
                  font=FONT_LABEL, bg=BG_CARD, fg=VERDE).pack(anchor="w", pady=(5, 0))
 
-        tk.Frame(painel, bg=CINZA_ESC, height=1).pack(fill="x", pady=(14, 10))
+        tk.Frame(painel, bg=CINZA_ESC, height=1).pack(fill="x", pady=(10, 8))
         tk.Label(painel, text="DICA", font=("Segoe UI", 8, "bold"),
                  bg=BG_CARD, fg=AMARELO).pack(anchor="w")
         tk.Label(painel,
-                 text="Feedbacks confirmados alimentam\nautomaticamente o banco de\nexemplos few-shot, melhorando\na precisao da IA nas proximas\nanalises.",
+                 text="Use o chat para explicar o contexto\nda ocorrência. A observação salva\nenriquece o exemplo few-shot e\nmelhora a precisão da IA.",
                  font=FONT_SMALL, bg=BG_CARD, fg=CINZA, justify="left").pack(anchor="w")
 
     # ── Aba 2: Perguntas ───────────────────────────────────────────────────────
@@ -308,13 +513,13 @@ class TrainingTab:
 
         total_in = sum(r["tok_in"] or 0 for r in dados)
         total_out = sum(r["tok_out"] or 0 for r in dados)
-        custo_estimado = (total_in * 15 + total_out * 75) / 1_000_000  # Opus pricing
+        custo_estimado = (total_in * 15 + total_out * 75) / 1_000_000
 
         linhas = [
             f"{'DIA':<12}  {'ANÁLISES':>8}  {'TOK ENTRADA':>12}  {'TOK SAÍDA':>10}",
             "─" * 50,
         ]
-        for r in dados[-15:]:  # últimas 15 linhas
+        for r in dados[-15:]:
             linhas.append(
                 f"{r['dia']:<12}  {r['analises']:>8}  {r['tok_in'] or 0:>12,}  {r['tok_out'] or 0:>10,}"
             )
@@ -342,7 +547,6 @@ class TrainingTab:
 
     def _exportar_excel(self):
         from tkinter import filedialog, messagebox
-        import threading
 
         def _gerar():
             try:
@@ -361,9 +565,7 @@ class TrainingTab:
                     destino=destino,
                 )
                 self._root.after(0, lambda: messagebox.showinfo(
-                    "Exportação concluída",
-                    f"Relatório salvo em:\n{caminho}",
-                ))
+                    "Exportação concluída", f"Relatório salvo em:\n{caminho}"))
             except Exception as exc:
                 self._root.after(0, lambda: messagebox.showerror("Erro", str(exc)))
 
@@ -435,14 +637,26 @@ class TrainingTab:
         )
         self._sv_detalhe.set(texto)
         self._sv_fb_status.set("")
-        self._obs_var.set("")
+        self._text_obs.delete("1.0", "end")
+
+    def _abrir_chat(self):
+        if not self._analise_selecionada:
+            self._sv_fb_status.set("Selecione uma deteccao primeiro.")
+            return
+
+        def _ao_salvar(resumo: str):
+            self._text_obs.delete("1.0", "end")
+            self._text_obs.insert("1.0", resumo)
+            self._sv_fb_status.set("Conversa salva na observação — confirme com Correto ou Falso Positivo.")
+
+        ChatDialog(self._root, self._analise_selecionada, on_salvar_obs=_ao_salvar)
 
     def _salvar_feedback(self, rotulo: str):
         if not self._analise_selecionada:
             self._sv_fb_status.set("Selecione uma deteccao primeiro.")
             return
         analise_id = self._analise_selecionada["id"]
-        obs = self._obs_var.get().strip()
+        obs = self._text_obs.get("1.0", "end-1c").strip()
 
         def _gravar():
             db.salvar_feedback(analise_id, rotulo, obs)
@@ -451,7 +665,7 @@ class TrainingTab:
 
         status = "Salvo: CORRETO" if rotulo == "correto" else "Salvo: FALSO POSITIVO"
         self._sv_fb_status.set(status)
-        self._obs_var.set("")
+        self._text_obs.delete("1.0", "end")
         self._root.after(600, self._carregar_dados)
 
     def _atualizar_estatisticas(self):
@@ -499,31 +713,68 @@ class TrainingTab:
             return
 
         for p in perguntas:
-            card = tk.Frame(self._frame_perguntas, bg=BG_CARD, padx=18, pady=14)
-            card.pack(fill="x", padx=12, pady=6)
+            self._montar_card_pergunta(p)
 
-            nivel = p.get("nivel_risco", "atencao")
-            cor = NIVEL_COR.get(nivel, CINZA)
-            conf = p.get("confianca", 0)
-            cabecalho = (
-                f"{p.get('camera_id','?')}  |  "
-                f"{str(p.get('timestamp_analise',''))[:19]}  |  "
-                f"{nivel.upper()}  |  Conf: {conf*100:.0f}%"
-            )
-            tk.Label(card, text=cabecalho, font=FONT_MONO,
-                     bg=BG_CARD, fg=cor).pack(anchor="w")
+    def _montar_card_pergunta(self, p: dict):
+        card = tk.Frame(self._frame_perguntas, bg=BG_CARD, padx=18, pady=14)
+        card.pack(fill="x", padx=12, pady=6)
 
-            tk.Label(card, text=p["pergunta"], font=FONT_LABEL,
-                     bg=BG_CARD, fg=BRANCO, wraplength=700,
-                     justify="left", pady=8).pack(anchor="w")
+        nivel = p.get("nivel_risco", "atencao")
+        cor = NIVEL_COR.get(nivel, CINZA)
+        conf = p.get("confianca", 0)
+        cabecalho = (
+            f"{p.get('camera_id','?')}  |  "
+            f"{str(p.get('timestamp_analise',''))[:19]}  |  "
+            f"{nivel.upper()}  |  Conf: {conf*100:.0f}%"
+        )
+        tk.Label(card, text=cabecalho, font=FONT_MONO,
+                 bg=BG_CARD, fg=cor).pack(anchor="w")
 
-            opcoes = json.loads(p["opcoes"]) if p.get("opcoes") else []
+        tk.Label(card, text=p["pergunta"], font=FONT_LABEL,
+                 bg=BG_CARD, fg=BRANCO, wraplength=700,
+                 justify="left", pady=8).pack(anchor="w")
+
+        # Opções rápidas
+        opcoes = json.loads(p["opcoes"]) if p.get("opcoes") else []
+        if opcoes:
+            tk.Label(card, text="Resposta rápida:", font=FONT_SMALL,
+                     bg=BG_CARD, fg=CINZA).pack(anchor="w", pady=(0, 4))
             brow = tk.Frame(card, bg=BG_CARD)
             brow.pack(fill="x")
             for op in opcoes:
                 _btn(brow, op,
                      lambda pid=p["id"], r=op: self._responder_pergunta(pid, r),
-                     bg=CINZA_ESC, fg=BRANCO).pack(side="left", padx=(0, 6))
+                     bg=CINZA_ESC, fg=BRANCO).pack(side="left", padx=(0, 6), pady=(0, 6))
+
+        # Separador
+        tk.Frame(card, bg=CINZA_ESC, height=1).pack(fill="x", pady=(8, 8))
+
+        # Explicação livre
+        tk.Label(card,
+                 text="Ou explique com suas palavras o que acontecia na cena:",
+                 font=FONT_SMALL, bg=BG_CARD, fg=CINZA).pack(anchor="w", pady=(0, 4))
+
+        frm_txt = tk.Frame(card, bg=BG_CARD)
+        frm_txt.pack(fill="x")
+        txt = tk.Text(
+            frm_txt, font=("Segoe UI", 9), bg="#242424", fg=BRANCO,
+            insertbackground=AMARELO, height=3, wrap="word", relief="flat",
+            highlightthickness=1, highlightbackground=CINZA_ESC,
+        )
+        sb_txt = ttk.Scrollbar(frm_txt, orient="vertical", command=txt.yview)
+        txt.configure(yscrollcommand=sb_txt.set)
+        sb_txt.pack(side="right", fill="y")
+        txt.pack(fill="x")
+        txt.insert("1.0", "Ex: o operador estava ajustando o equipamento, não havia risco...")
+
+        txt.bind("<FocusIn>", lambda e, t=txt: t.delete("1.0", "end")
+                 if t.get("1.0", "end-1c").startswith("Ex:") else None)
+
+        brow2 = tk.Frame(card, bg=BG_CARD)
+        brow2.pack(anchor="w", pady=(6, 0))
+        _btn(brow2, "  Enviar Explicação  ",
+             lambda pid=p["id"], t=txt: self._responder_pergunta_livre(pid, t),
+             bg=AZUL, fg=BRANCO).pack(side="left")
 
     def _atualizar_tendencias(self):
         try:
@@ -558,6 +809,12 @@ class TrainingTab:
             daemon=True
         ).start()
         self._root.after(500, self._carregar_dados)
+
+    def _responder_pergunta_livre(self, pergunta_id: int, txt_widget: tk.Text):
+        texto = txt_widget.get("1.0", "end-1c").strip()
+        if not texto or texto.startswith("Ex:"):
+            return
+        self._responder_pergunta(pergunta_id, texto)
 
 
 # ── Ponto de entrada ───────────────────────────────────────────────────────────
