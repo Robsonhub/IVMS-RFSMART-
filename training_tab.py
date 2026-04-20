@@ -5,6 +5,7 @@ Tema: amarelo/preto (#FFD000 / #0F0F0F), consistente com o restante do sistema.
 import json
 import threading
 import tkinter as tk
+from pathlib import Path
 from tkinter import ttk
 
 import db
@@ -237,6 +238,226 @@ class ChatDialog:
         self._win.destroy()
 
 
+# ── Player de Vídeo ────────────────────────────────────────────────────────────
+
+class VideoPlayerDialog:
+    """Janela para visualizar o clipe de vídeo capturado durante um alerta."""
+
+    def __init__(self, parent: tk.Misc, analise: dict,
+                 on_salvar=None, on_descartar=None):
+        self._analise      = analise
+        self._on_salvar    = on_salvar
+        self._on_descartar = on_descartar
+        self._clip_path    = analise.get("clip_path", "")
+        self._frames: list = []
+        self._idx          = 0
+        self._playing      = False
+        self._photo        = None
+        self._after_id     = None
+        self._frame_ms     = 33
+
+        self._win = tk.Toplevel(parent)
+        self._win.title("▶ Clipe de Alerta — SPARTA")
+        self._win.configure(bg=BG)
+        self._win.geometry("720x580")
+        self._win.resizable(True, True)
+        self._win.grab_set()
+        self._win.protocol("WM_DELETE_WINDOW", self._fechar)
+
+        self._montar_ui()
+        self._carregar_video()
+
+    def _montar_ui(self):
+        a = self._analise
+        resumo = (
+            f"Câmera: {a.get('camera_id','?')}  |  "
+            f"{str(a.get('timestamp_analise',''))[:19]}  |  "
+            f"Nível: {a.get('nivel_risco','?').upper()}  |  "
+            f"Conf: {a.get('confianca',0)*100:.0f}%"
+        )
+
+        cab = tk.Frame(self._win, bg=LARANJA, padx=16, pady=8)
+        cab.pack(fill="x")
+        tk.Label(cab, text="▶  Clipe de Alerta Detectado",
+                 font=("Segoe UI", 10, "bold"), bg=LARANJA, fg=BRANCO).pack(side="left")
+
+        ctx = tk.Frame(self._win, bg=BG_CARD, padx=14, pady=6)
+        ctx.pack(fill="x")
+        tk.Label(ctx, text=resumo, font=FONT_MONO, bg=BG_CARD, fg=CINZA).pack(anchor="w")
+
+        self._canvas = tk.Canvas(self._win, bg="#000000", highlightthickness=0)
+        self._canvas.pack(fill="both", expand=True, padx=8, pady=(6, 2))
+
+        self._var_pos = tk.IntVar(value=0)
+        self._scale = tk.Scale(
+            self._win, from_=0, to=0, orient="horizontal",
+            variable=self._var_pos, command=self._seek,
+            bg=BG, fg=BRANCO, troughcolor=CINZA_ESC,
+            highlightthickness=0, sliderrelief="flat", sliderlength=12,
+        )
+        self._scale.pack(fill="x", padx=8)
+
+        self._sv_pos = tk.StringVar(value="0 / 0")
+        tk.Label(self._win, textvariable=self._sv_pos,
+                 font=FONT_SMALL, bg=BG, fg=CINZA).pack()
+
+        ctrl = tk.Frame(self._win, bg=BG, pady=4)
+        ctrl.pack()
+        _btn(ctrl, "⏮", self._ir_inicio, bg=CINZA_ESC, fg=BRANCO).pack(side="left", padx=2)
+        self._btn_play = _btn(ctrl, "▶ Play", self._toggle_play, bg=AMARELO, fg=BG)
+        self._btn_play.pack(side="left", padx=4)
+        _btn(ctrl, "⏭", self._ir_fim, bg=CINZA_ESC, fg=BRANCO).pack(side="left", padx=2)
+
+        tk.Frame(self._win, bg=CINZA_ESC, height=1).pack(fill="x", padx=8, pady=(8, 4))
+        dec = tk.Frame(self._win, bg=BG, pady=6)
+        dec.pack(fill="x", padx=8)
+        tk.Label(dec, text="O que deseja fazer com este clipe?",
+                 font=FONT_LABEL, bg=BG, fg=CINZA).pack(side="left", padx=(0, 12))
+        _btn(dec, "  Salvar localmente  ", self._salvar_local,
+             bg=VERDE, fg=BG).pack(side="left", padx=(0, 4))
+        _btn(dec, "  Descartar clipe  ", self._descartar,
+             bg=VERMELHO, fg=BRANCO).pack(side="left", padx=(0, 4))
+        _btn(dec, "  Fechar (manter)  ", self._fechar,
+             bg=CINZA_ESC, fg=BRANCO).pack(side="left")
+
+    def _carregar_video(self):
+        import cv2 as _cv2
+        try:
+            cap = _cv2.VideoCapture(self._clip_path)
+            if not cap.isOpened():
+                self._mostrar_erro("Arquivo de vídeo não encontrado ou corrompido.")
+                return
+            fps = cap.get(_cv2.CAP_PROP_FPS) or 25
+            self._frame_ms = max(15, int(1000 / fps))
+            self._frames = []
+            while True:
+                ok, fr = cap.read()
+                if not ok:
+                    break
+                self._frames.append(fr)
+            cap.release()
+            if not self._frames:
+                self._mostrar_erro("Vídeo vazio ou formato não suportado.")
+                return
+            total = len(self._frames)
+            self._scale.configure(to=max(0, total - 1))
+            self._sv_pos.set(f"0 / {total}")
+            self._mostrar_frame(0)
+        except Exception as exc:
+            self._mostrar_erro(f"Erro ao abrir vídeo: {exc}")
+
+    def _mostrar_erro(self, msg: str):
+        self._canvas.create_text(
+            360, 120, text=msg, fill=VERMELHO,
+            font=("Segoe UI", 11), anchor="center",
+        )
+
+    def _mostrar_frame(self, idx: int):
+        if not self._frames or idx < 0 or idx >= len(self._frames):
+            return
+        import cv2 as _cv2
+        from PIL import Image as _PilImg, ImageTk as _ITk
+        fr = self._frames[idx]
+        cw = self._canvas.winfo_width()  or 640
+        ch = self._canvas.winfo_height() or 360
+        fh, fw = fr.shape[:2]
+        escala = min(cw / fw, ch / fh, 1.0)
+        nw = max(1, int(fw * escala))
+        nh = max(1, int(fh * escala))
+        resized = _cv2.resize(fr, (nw, nh))
+        rgb = _cv2.cvtColor(resized, _cv2.COLOR_BGR2RGB)
+        self._photo = _ITk.PhotoImage(image=_PilImg.fromarray(rgb))
+        self._canvas.delete("all")
+        self._canvas.create_image(cw // 2, ch // 2, image=self._photo, anchor="center")
+        self._sv_pos.set(f"{idx + 1} / {len(self._frames)}")
+        self._var_pos.set(idx)
+
+    def _next_frame(self):
+        if not self._playing:
+            return
+        self._idx = (self._idx + 1) % max(1, len(self._frames))
+        self._mostrar_frame(self._idx)
+        self._after_id = self._win.after(self._frame_ms, self._next_frame)
+
+    def _toggle_play(self):
+        if not self._frames:
+            return
+        self._playing = not self._playing
+        if self._playing:
+            self._btn_play.config(text="⏸ Pausa")
+            self._next_frame()
+        else:
+            self._btn_play.config(text="▶ Play")
+            if self._after_id:
+                self._win.after_cancel(self._after_id)
+
+    def _seek(self, val):
+        try:
+            self._idx = int(float(val))
+            self._mostrar_frame(self._idx)
+        except Exception:
+            pass
+
+    def _ir_inicio(self):
+        self._playing = False
+        self._btn_play.config(text="▶ Play")
+        if self._after_id:
+            self._win.after_cancel(self._after_id)
+        self._idx = 0
+        self._mostrar_frame(0)
+
+    def _ir_fim(self):
+        self._playing = False
+        self._btn_play.config(text="▶ Play")
+        if self._after_id:
+            self._win.after_cancel(self._after_id)
+        if self._frames:
+            self._idx = len(self._frames) - 1
+            self._mostrar_frame(self._idx)
+
+    def _salvar_local(self):
+        from tkinter import filedialog
+        import shutil
+        dest = filedialog.asksaveasfilename(
+            defaultextension=".mp4",
+            filetypes=[("Vídeo MP4", "*.mp4")],
+            title="Salvar clipe de alerta",
+            initialfile=f"alerta_{self._analise.get('frame_id','clip')}.mp4",
+        )
+        if not dest:
+            return
+        try:
+            shutil.copy2(self._clip_path, dest)
+            if self._on_salvar:
+                self._on_salvar(dest)
+            self._fechar()
+        except Exception as exc:
+            from tkinter import messagebox
+            messagebox.showerror("Erro", f"Não foi possível salvar:\n{exc}",
+                                 parent=self._win)
+
+    def _descartar(self):
+        from tkinter import messagebox
+        if not messagebox.askyesno(
+            "Descartar clipe",
+            "Deletar o vídeo permanentemente?\nEsta ação não pode ser desfeita.",
+            parent=self._win,
+        ):
+            return
+        self._playing = False
+        if self._after_id:
+            self._win.after_cancel(self._after_id)
+        if self._on_descartar:
+            self._on_descartar()
+        self._win.destroy()
+
+    def _fechar(self):
+        self._playing = False
+        if self._after_id:
+            self._win.after_cancel(self._after_id)
+        self._win.destroy()
+
+
 # ── TrainingTab ────────────────────────────────────────────────────────────────
 
 class TrainingTab:
@@ -422,9 +643,13 @@ class TrainingTab:
 
         # Botão de chat com IA
         _btn(painel, "  Conversar com IA sobre esta ocorrência  ",
-             self._abrir_chat, bg=AZUL, fg=BRANCO).pack(fill="x", pady=(2, 8))
+             self._abrir_chat, bg=AZUL, fg=BRANCO).pack(fill="x", pady=(2, 4))
 
-        tk.Frame(painel, bg=CINZA_ESC, height=1).pack(fill="x", pady=(0, 8))
+        # Botão de player de vídeo (visível somente quando clip existe em disco)
+        self._btn_clip = _btn(painel, "  ▶ Ver Clipe do Alerta  ",
+                              self._abrir_player, bg=LARANJA, fg=BRANCO)
+
+        tk.Frame(painel, bg=CINZA_ESC, height=1).pack(fill="x", pady=(8, 8))
 
         tk.Label(painel, text="Observação / Explicação:",
                  font=FONT_LABEL, bg=BG_CARD, fg=CINZA).pack(anchor="w", pady=(0, 2))
@@ -639,6 +864,36 @@ class TrainingTab:
         self._sv_fb_status.set("")
         self._text_obs.delete("1.0", "end")
 
+        # Mostrar botão de clipe somente quando o arquivo existe em disco
+        clip = (self._analise_selecionada.get("clip_path") or "").strip()
+        if clip and Path(clip).exists():
+            self._btn_clip.pack(fill="x", pady=(0, 4))
+        else:
+            self._btn_clip.pack_forget()
+
+    def _abrir_player(self):
+        if not self._analise_selecionada:
+            return
+
+        def _ao_salvar(dest: str):
+            self._text_obs.insert("end", f"\n[Clipe salvo em: {dest}]")
+            self._sv_fb_status.set("Clipe salvo localmente.")
+            self._analise_selecionada["_clip_salvo"] = True
+
+        def _ao_descartar():
+            analise_id = self._analise_selecionada["id"]
+            threading.Thread(
+                target=lambda: db.deletar_clip_analise(analise_id), daemon=True
+            ).start()
+            self._btn_clip.pack_forget()
+            self._analise_selecionada["clip_path"] = None
+            self._sv_fb_status.set("Clipe descartado.")
+
+        VideoPlayerDialog(
+            self._root, self._analise_selecionada,
+            on_salvar=_ao_salvar, on_descartar=_ao_descartar,
+        )
+
     def _abrir_chat(self):
         if not self._analise_selecionada:
             self._sv_fb_status.set("Selecione uma deteccao primeiro.")
@@ -662,6 +917,15 @@ class TrainingTab:
             db.salvar_feedback(analise_id, rotulo, obs)
 
         threading.Thread(target=_gravar, daemon=True).start()
+
+        # Deleta clip automaticamente ao dar feedback (a menos que tenha sido salvo)
+        clip = (self._analise_selecionada.get("clip_path") or "").strip()
+        if clip and Path(clip).exists() and not self._analise_selecionada.get("_clip_salvo"):
+            threading.Thread(
+                target=lambda: db.deletar_clip_analise(analise_id), daemon=True
+            ).start()
+            self._btn_clip.pack_forget()
+            self._analise_selecionada["clip_path"] = None
 
         status = "Salvo: CORRETO" if rotulo == "correto" else "Salvo: FALSO POSITIVO"
         self._sv_fb_status.set(status)

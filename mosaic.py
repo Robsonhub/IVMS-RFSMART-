@@ -166,6 +166,8 @@ class CameraSlot:
         self.resultado        = {}
         self.em_analise       = False
         self.deteccoes_locais: list = []
+        self.frames_recentes: list = []
+        self._BUFFER_MAX = 100
         self.analisador_local = AnalisadorLocal(camera_id=cfg_cam.get("id", str(idx)))
         self._lock            = threading.Lock()
         self._cap             = None
@@ -296,6 +298,9 @@ class CameraSlot:
                 with self._lock:
                     self.frame = thumb
                     self.deteccoes_locais = bboxes
+                    self.frames_recentes.append(small.copy())
+                    if len(self.frames_recentes) > self._BUFFER_MAX:
+                        self.frames_recentes.pop(0)
 
 
 def _safe_text(s: str) -> str:
@@ -563,10 +568,15 @@ class FilaAnalise:
                         pass
 
                 from config import FASE_PROCESSO, PASTA_CLIPS
-                clip_path = (
-                    str(PASTA_CLIPS / f"alerta_{frame_id}.mp4")
-                    if resultado.get("alerta") else None
-                )
+                clip_path = None
+                if resultado.get("alerta"):
+                    clip_path = str(PASTA_CLIPS / f"alerta_{frame_id}.mp4")
+                    try:
+                        from alert_handler import salvar_clip
+                        salvar_clip(list(slot.frames_recentes), frame_id)
+                    except Exception as exc:
+                        log.warning("[%s] Falha ao salvar clip: %s", camera_id, exc)
+                        clip_path = None
                 db.salvar_analise(
                     resultado=resultado,
                     frame_id=frame_id,

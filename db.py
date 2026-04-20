@@ -240,6 +240,24 @@ def _criar_pergunta_automatica(analise_id: int, resultado: dict):
         conn.commit()
 
 
+def deletar_clip_analise(analise_id: int):
+    """Remove o arquivo .mp4 do disco e zera clip_path no banco."""
+    conn = get_connection()
+    row = conn.execute(
+        "SELECT clip_path FROM analises WHERE id=?", (analise_id,)
+    ).fetchone()
+    if row and row["clip_path"]:
+        try:
+            Path(row["clip_path"]).unlink(missing_ok=True)
+        except Exception as exc:
+            log.warning("Erro ao deletar clip %s: %s", row["clip_path"], exc)
+    with _lock:
+        conn.execute(
+            "UPDATE analises SET clip_path=NULL WHERE id=?", (analise_id,)
+        )
+        conn.commit()
+
+
 def responder_pergunta(pergunta_id: int, resposta: str):
     with _lock:
         conn = get_connection()

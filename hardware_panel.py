@@ -160,6 +160,82 @@ def _coletar_dados() -> dict:
     except Exception:
         pass
 
+    # ── Recursos de IA local ─────────────────────────────────────────────────
+    recursos: dict = {}
+
+    try:
+        import ultralytics
+        tier_desc = "—"
+        try:
+            from vision_engine import VisionEngine
+            eng = VisionEngine._instancia
+            if eng:
+                tier_desc = f"Tier {eng.tier} — max {eng.max_cameras} câm."
+        except Exception:
+            pass
+        recursos["yolo"] = (True, f"v{ultralytics.__version__}  {tier_desc}")
+    except ImportError:
+        recursos["yolo"] = (False, "não instalado")
+
+    try:
+        import cv2 as _cv
+        cuda_n = 0
+        try:
+            cuda_n = _cv.cuda.getCudaEnabledDeviceCount()
+        except Exception:
+            pass
+        recursos["opencv"] = (True, f"v{_cv.__version__}  CUDA: {cuda_n} dev.")
+    except ImportError:
+        recursos["opencv"] = (False, "não instalado")
+
+    try:
+        import deep_sort_realtime  # noqa: F401
+        recursos["deepsort"] = (True, "disponível")
+    except ImportError:
+        recursos["deepsort"] = (False, "não instalado")
+
+    try:
+        import cv2 as _cv
+        _cv.createBackgroundSubtractorMOG2()
+        recursos["mog2"] = (True, "disponível")
+    except Exception:
+        recursos["mog2"] = (False, "indisponível")
+
+    try:
+        import cv2 as _cv
+        _hog = _cv.HOGDescriptor()
+        _hog.setSVMDetector(_cv.HOGDescriptor.getDefaultPeopleDetector())
+        recursos["hog"] = (True, "detector padrão carregado")
+    except Exception as _e:
+        recursos["hog"] = (False, str(_e)[:40])
+
+    try:
+        import cv2 as _cv
+        import numpy as _np
+        _a = _np.zeros((64, 64), dtype=_np.uint8)
+        _cv.calcOpticalFlowFarneback(_a, _a, None, 0.5, 3, 15, 3, 5, 1.2, 0)
+        recursos["optical_flow"] = (True, "disponível")
+    except Exception:
+        recursos["optical_flow"] = (False, "indisponível")
+
+    _modelo_pt = Path("models/yolo_tapete_ouro.pt")
+    if _modelo_pt.exists():
+        _sz_mb = _modelo_pt.stat().st_size / 1024 ** 2
+        recursos["custom_model"] = (True, f"{_sz_mb:.1f} MB")
+    else:
+        recursos["custom_model"] = (False, "não encontrado em models/")
+
+    try:
+        import torch as _torch
+        if _torch.cuda.is_available():
+            recursos["cuda"] = (True, _torch.cuda.get_device_name(0))
+        else:
+            recursos["cuda"] = (False, "torch sem CUDA")
+    except ImportError:
+        recursos["cuda"] = (False, "torch não instalado")
+
+    dados["recursos_ia"] = recursos
+
     dados["ts"] = datetime.now().strftime("%H:%M:%S")
     return dados
 
@@ -392,6 +468,40 @@ def abrir_hardware_panel():
     lbl_vis_rec    = _linha(card_vis, "Recomendação",   sv_vis_rec)
 
     # ────────────────────────────────────────────────────────────────────────
+    # Recursos de IA Local
+    # ────────────────────────────────────────────────────────────────────────
+    _secao(corpo, "RECURSOS DE APRENDIZADO LOCAL")
+    card_ia = _card(corpo)
+
+    _RECURSOS_INFO = [
+        ("yolo",         "YOLOv8"),
+        ("opencv",       "OpenCV"),
+        ("deepsort",     "DeepSORT"),
+        ("mog2",         "MOG2 (Background)"),
+        ("hog",          "HOG Detector"),
+        ("optical_flow", "Optical Flow"),
+        ("custom_model", "Modelo Customizado"),
+        ("cuda",         "CUDA / GPU"),
+    ]
+
+    sv_recursos: dict = {}
+    lbl_recursos_dot: dict = {}
+
+    for _chave, _nome in _RECURSOS_INFO:
+        _sv_d = tk.StringVar(value="verificando...")
+        _fr = tk.Frame(card_ia, bg=BG_ROW)
+        _fr.pack(fill="x", pady=2)
+        _lbl_dot = tk.Label(_fr, text="●", font=FONT_S, bg=BG_ROW,
+                            fg=CINZA, width=2, anchor="w")
+        _lbl_dot.pack(side="left")
+        tk.Label(_fr, text=f"{_nome:<22}", font=FONT_M,
+                 bg=BG_ROW, fg=BCOR).pack(side="left")
+        tk.Label(_fr, textvariable=_sv_d, font=FONT_S,
+                 bg=BG_ROW, fg=CINZA).pack(side="left")
+        sv_recursos[_chave] = _sv_d
+        lbl_recursos_dot[_chave] = _lbl_dot
+
+    # ────────────────────────────────────────────────────────────────────────
     # Processo SPARTA
     # ────────────────────────────────────────────────────────────────────────
     _secao(corpo, "PROCESSO SPARTA")
@@ -540,6 +650,16 @@ def abrir_hardware_panel():
         sv_proc_cpu.set(f"{d.get('proc_cpu', 0):.1f}%")
         sv_proc_ram.set(_fmt_bytes(d.get("proc_ram", 0)))
         sv_proc_thr.set(str(d.get("proc_threads", "—")))
+
+        # Recursos de IA local
+        for _chave in ("yolo", "opencv", "deepsort", "mog2",
+                       "hog", "optical_flow", "custom_model", "cuda"):
+            _rec = d.get("recursos_ia", {}).get(_chave)
+            if _rec is None:
+                continue
+            _ativo, _desc = _rec
+            sv_recursos[_chave].set(_desc)
+            lbl_recursos_dot[_chave].config(fg=VERDE if _ativo else VERM)
 
         # Alertas
         alertas = []
