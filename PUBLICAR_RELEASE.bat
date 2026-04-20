@@ -101,22 +101,7 @@ echo.
 echo [5/6] Empacotando %ZIP_NAME%...
 if exist "%ZIP_PATH%" del /f /q "%ZIP_PATH%"
 
-:: Grava script Python em arquivo temporario (evita problema de multi-linha no CMD)
-set "PY_ZIP=%TEMP%\sparta_zip.py"
-(
-    echo import zipfile, pathlib, sys
-    echo src = pathlib.Path(sys.argv[1])
-    echo out = pathlib.Path(sys.argv[2])
-    echo files = [f for f in src.rglob('*') if f.is_file()]
-    echo with zipfile.ZipFile(out, 'w', zipfile.ZIP_DEFLATED, compresslevel=6) as z:
-    echo     for i, f in enumerate(files, 1):
-    echo         z.write(f, f.relative_to(src))
-    echo         print(f'\r  {int(i*100/len(files))}%% ({i}/{len(files)})', end='', flush=True)
-    echo print()
-    echo print(f'[OK] {out.name}  ({out.stat().st_size/1048576:.1f} MB)')
-) > "%PY_ZIP%"
-
-python "%PY_ZIP%" "%DIST_DIR%" "%ZIP_PATH%"
+powershell -NoProfile -Command "Compress-Archive -Path '%DIST_DIR%\*' -DestinationPath '%ZIP_PATH%' -CompressionLevel Optimal; if ($?) { $mb = [math]::Round((Get-Item '%ZIP_PATH%').Length/1MB,1); Write-Host \"[OK] %ZIP_NAME%  ($mb MB)\" }"
 if errorlevel 1 (
     echo [ERRO] Falha ao criar .zip
     pause & exit /b 1
