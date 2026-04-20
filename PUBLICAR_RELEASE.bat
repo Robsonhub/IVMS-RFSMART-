@@ -55,7 +55,6 @@ if errorlevel 1 (
         echo Instale manualmente: https://cli.github.com
         pause & exit /b 1
     )
-    :: Recarrega PATH
     call RefreshEnv.cmd >nul 2>&1
 )
 echo [OK]
@@ -102,29 +101,32 @@ echo.
 echo [5/6] Empacotando %ZIP_NAME%...
 if exist "%ZIP_PATH%" del /f /q "%ZIP_PATH%"
 
-python -c "
-import zipfile, pathlib
-src = pathlib.Path(r'%DIST_DIR%')
-out = pathlib.Path(r'%ZIP_PATH%')
-files = [f for f in src.rglob('*') if f.is_file()]
-with zipfile.ZipFile(out, 'w', zipfile.ZIP_DEFLATED, compresslevel=6) as z:
-    for i, f in enumerate(files, 1):
-        z.write(f, f.relative_to(src))
-        print(f'\r  {int(i*100/len(files))}%% ({i}/{len(files)})', end='', flush=True)
-print()
-print(f'[OK] {out.name}  ({out.stat().st_size/1048576:.1f} MB)')
-"
+:: Grava script Python em arquivo temporario (evita problema de multi-linha no CMD)
+set "PY_ZIP=%TEMP%\sparta_zip.py"
+(
+    echo import zipfile, pathlib, sys
+    echo src = pathlib.Path(sys.argv[1])
+    echo out = pathlib.Path(sys.argv[2])
+    echo files = [f for f in src.rglob('*') if f.is_file()]
+    echo with zipfile.ZipFile(out, 'w', zipfile.ZIP_DEFLATED, compresslevel=6) as z:
+    echo     for i, f in enumerate(files, 1):
+    echo         z.write(f, f.relative_to(src))
+    echo         print(f'\r  {int(i*100/len(files))}%% ({i}/{len(files)})', end='', flush=True)
+    echo print()
+    echo print(f'[OK] {out.name}  ({out.stat().st_size/1048576:.1f} MB)')
+) > "%PY_ZIP%"
+
+python "%PY_ZIP%" "%DIST_DIR%" "%ZIP_PATH%"
 if errorlevel 1 (
     echo [ERRO] Falha ao criar .zip
     pause & exit /b 1
 )
 echo.
 
-:: ── ETAPA 6: Publicar Release no GitHub ──────────────────────────────────
+:: ── ETAPA 6: Publicar Release no GitHub ───────────────────────────────────
 echo [6/6] Publicando Release %TAG% no GitHub...
 echo.
 
-:: Verifica se a tag já existe
 gh release view %TAG% >nul 2>&1
 if not errorlevel 1 (
     echo [AVISO] Release %TAG% ja existe no GitHub.
