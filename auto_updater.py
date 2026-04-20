@@ -18,8 +18,11 @@ log = logging.getLogger(__name__)
 _TIMEOUT = 10
 
 
+_GITHUB_REPO_DEFAULT = "Robsonhub/IVMS-RFSMART-"
+
+
 def _github_repo() -> str:
-    return os.getenv("GITHUB_REPO", "")
+    return os.getenv("GITHUB_REPO", _GITHUB_REPO_DEFAULT)
 
 
 def _api_url() -> str:
@@ -44,7 +47,7 @@ def verificar_atualizacao() -> tuple[str, dict | str | None]:
     """
     repo = _github_repo()
     if not repo:
-        log.warning("GITHUB_REPO não configurado no .env — auto-update desabilitado")
+        log.warning("GITHUB_REPO não configurado — auto-update desabilitado")
         return ("nao_configurado", None)
 
     try:

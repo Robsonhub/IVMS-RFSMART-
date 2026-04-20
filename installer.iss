@@ -54,3 +54,33 @@ Type: files; Name: "{app}\monitor.log"
 Type: files; Name: "{app}\.env"
 Type: dirifempty; Name: "{app}"
 
+[Code]
+const
+  GITHUB_REPO = 'Robsonhub/IVMS-RFSMART-';
+
+procedure EnsureGithubRepo();
+var
+  EnvFile, Content, NewLine: String;
+begin
+  EnvFile := ExpandConstant('{app}\.env');
+  NewLine  := 'GITHUB_REPO=' + GITHUB_REPO;
+
+  if not FileExists(EnvFile) then
+  begin
+    SaveStringToFile(EnvFile, NewLine + #13#10, False);
+    Exit;
+  end;
+
+  if LoadStringFromFile(EnvFile, Content) then
+  begin
+    if Pos('GITHUB_REPO=', Content) = 0 then
+      SaveStringToFile(EnvFile, #13#10 + NewLine + #13#10, True);
+  end;
+end;
+
+procedure CurStepChanged(CurStep: TSetupStep);
+begin
+  if CurStep = ssPostInstall then
+    EnsureGithubRepo();
+end;
+
