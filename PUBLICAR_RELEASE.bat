@@ -9,7 +9,7 @@ echo Diretorio: %CD%
 echo.
 
 :: ── Lê versão do version.py ───────────────────────────────────────────────
-python -c "from version import VERSION; print(VERSION)" > "%TEMP%\sparta_ver.txt" 2>&1
+py -c "from version import VERSION; print(VERSION)" > "%TEMP%\sparta_ver.txt" 2>&1
 if errorlevel 1 (
     echo [ERRO] Falha ao ler version.py:
     type "%TEMP%\sparta_ver.txt"
@@ -35,7 +35,7 @@ echo.
 
 :: ── ETAPA 1: Verificar Python ─────────────────────────────────────────────
 echo [1/6] Verificando Python...
-python --version >nul 2>&1
+py --version >nul 2>&1
 if errorlevel 1 (
     echo [ERRO] Python nao encontrado. Instale Python 3.10+
     pause & exit /b 1
@@ -73,8 +73,8 @@ if errorlevel 1 (
 
 :: ── ETAPA 3: Instalar dependencias Python ─────────────────────────────────
 echo [3/6] Instalando dependencias Python...
-python -m pip install --upgrade pip --quiet
-python -m pip install anthropic opencv-python python-dotenv requests pyinstaller pillow onvif-zeep --quiet
+py -m pip install --upgrade pip --quiet
+py -m pip install anthropic opencv-py py-dotenv requests pyinstaller pillow onvif-zeep --quiet
 if errorlevel 1 (
     echo [ERRO] Falha nas dependencias.
     pause & exit /b 1
@@ -88,7 +88,7 @@ echo.
 if exist "%DIST_DIR%"  rmdir /s /q "%DIST_DIR%"
 if exist "build\MonitorTapeteOuro" rmdir /s /q "build\MonitorTapeteOuro"
 
-python -m PyInstaller monitor_tapete.spec --noconfirm
+py -m PyInstaller monitor_tapete.spec --noconfirm
 if errorlevel 1 (
     echo.
     echo [ERRO] Build PyInstaller falhou.
@@ -105,7 +105,7 @@ if exist "%ZIP_PATH%" del /f /q "%ZIP_PATH%"
 taskkill /f /im MonitorTapeteOuro.exe >nul 2>&1
 timeout /t 2 /nobreak >nul
 
-python -c "import zipfile,pathlib;src=pathlib.Path(r'%DIST_DIR%');out=pathlib.Path(r'%ZIP_PATH%');zf=zipfile.ZipFile(out,'w',zipfile.ZIP_DEFLATED,compresslevel=6);[zf.write(f,f.relative_to(src)) for f in src.rglob('*') if f.is_file()];zf.close();sz=round(out.stat().st_size/1048576,1);print(f'[OK] {out.name}  ({sz} MB)')"
+py -c "import zipfile,pathlib;src=pathlib.Path(r'%DIST_DIR%');out=pathlib.Path(r'%ZIP_PATH%');zf=zipfile.ZipFile(out,'w',zipfile.ZIP_DEFLATED,compresslevel=6);[zf.write(f,f.relative_to(src)) for f in src.rglob('*') if f.is_file()];zf.close();sz=round(out.stat().st_size/1048576,1);print(f'[OK] {out.name}  ({sz} MB)')"
 if errorlevel 1 (
     echo [ERRO] Falha ao criar .zip
     pause & exit /b 1
