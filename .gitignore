@@ -1,6 +1,7 @@
 # Segredos
 .env
 *.env
+scripts/.env.publish
 
 # Banco de dados de producao
 sparta_analytics.db
