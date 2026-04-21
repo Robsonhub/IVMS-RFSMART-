@@ -1,6 +1,15 @@
 import logging
+import os
 import sys
 from pathlib import Path
+
+# Força ffmpeg do OpenCV a usar TCP no RTSP e decode single-thread —
+# evita crashes de libavcodec (async_lock / GIL) com streams H.264/H.265.
+# Deve ser definido ANTES do primeiro import de cv2.
+os.environ.setdefault(
+    "OPENCV_FFMPEG_CAPTURE_OPTIONS",
+    "rtsp_transport;tcp|threads;1",
+)
 
 # Suprime crash do GC ao coletar StringVar/BooleanVar fora do loop Tkinter
 try:

@@ -30,7 +30,8 @@ echo.
 :: ── ETAPA 2: Instalar dependencias Python ────────────────────────────────
 echo [2/6] Instalando dependencias...
 python -m pip install --upgrade pip --quiet
-python -m pip install anthropic opencv-python python-dotenv requests pyinstaller pillow onvif-zeep --quiet
+python -m pip install -r requirements.txt --quiet
+python -m pip install pyinstaller pillow --quiet
 if errorlevel 1 (
     echo [ERRO] Falha nas dependencias. Verifique a internet.
     pause & exit /b 1

@@ -108,7 +108,8 @@ if errorlevel 1 (
 :: ── ETAPA 3: Instalar dependencias Python ─────────────────────────────────
 echo [3/6] Instalando dependencias Python...
 "%PY%" -m pip install --upgrade pip --quiet
-"%PY%" -m pip install anthropic opencv-python python-dotenv requests pyinstaller pillow onvif-zeep --quiet
+"%PY%" -m pip install -r requirements.txt --quiet
+"%PY%" -m pip install pyinstaller pillow --quiet
 if errorlevel 1 (
     echo [ERRO] Falha nas dependencias.
     pause & exit /b 1

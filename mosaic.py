@@ -198,9 +198,18 @@ class CameraSlot:
 
     def parar(self):
         self._rodando = False
-        if self._cap is not None:
-            self._cap.release()
+        # Aguarda thread de captura sair de cap.read() antes de liberar o
+        # objeto — release durante read causa crash GIL no libavcodec.
+        if self._thread.is_alive() and self._thread is not threading.current_thread():
+            self._thread.join(timeout=10)
+        with self._lock:
+            cap = self._cap
             self._cap = None
+        if cap is not None:
+            try:
+                cap.release()
+            except Exception:
+                pass
 
     def get_frame(self):
         with self._lock:
@@ -251,7 +260,8 @@ class CameraSlot:
             atraso = 1.0
             falhas = 0
             while self._rodando and not self._trocar.is_set():
-                cap = self._cap
+                with self._lock:
+                    cap = self._cap
                 if cap is None:
                     break
                 try:
