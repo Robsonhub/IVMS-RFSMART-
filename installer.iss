@@ -1,7 +1,7 @@
 ; Inno Setup 6 - SPARTA AGENTE IA
 
 #define AppName      "SPARTA AGENTE IA"
-#define AppVersion   "1.1.6"
+#define AppVersion   "1.1.7"
 #define AppPublisher "Tapete de Ouro - Seguranca Patrimonial"
 #define AppExeName   "MonitorTapeteOuro.exe"
 #define SourceDir    "dist\MonitorTapeteOuro"
@@ -25,9 +25,9 @@ PrivilegesRequired=lowest
 CloseApplications=yes
 Compression=lzma2/ultra64
 SolidCompression=yes
-VersionInfoVersion=1.1.6.0
+VersionInfoVersion=1.1.7.0
 VersionInfoProductName={#AppName}
-VersionInfoProductVersion=1.1.6.0
+VersionInfoProductVersion=1.1.7.0
 
 [Languages]
 Name: "ptbr"; MessagesFile: "compiler:Languages\BrazilianPortuguese.isl"
@@ -60,7 +60,8 @@ const
 
 procedure EnsureUpdateServer();
 var
-  EnvFile, Content, NewLine: String;
+  EnvFile, NewLine: String;
+  Content: AnsiString;
 begin
   EnvFile := ExpandConstant('{app}\.env');
   NewLine  := 'UPDATE_SERVER_URL=' + UPDATE_SERVER_URL;
