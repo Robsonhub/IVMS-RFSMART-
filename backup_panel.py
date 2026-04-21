@@ -15,6 +15,7 @@ from tkinter import filedialog, messagebox, ttk
 
 import db as _db
 import data_export_panel as _exp
+import knowledge_sync as _ks
 
 log = logging.getLogger(__name__)
 
@@ -40,12 +41,18 @@ _CAMERAS_JSON   = Path(".") / "cameras.json"
 _ENV_FILE       = Path(".") / ".env"
 
 _DEFAULT_CFG = {
-    "destino":          "",
-    "compactar":        True,
-    "modo":             "manual",       # "manual" | "automatico"
-    "intervalo_horas":  6.0,
-    "max_backups":      20,
+    "destino":              "",
+    "compactar":            True,
+    "modo":                 "manual",       # "manual" | "automatico"
+    "intervalo_horas":      6.0,
+    "max_backups":          20,
+    "sync_auto":            False,
+    "sync_intervalo_horas": 24.0,
 }
+
+# Thread do agendador de sync de aprendizado (singleton)
+_sync_thread: threading.Thread | None = None
+_sync_stop   = threading.Event()
 
 # Thread do agendador automático (singleton)
 _auto_thread: threading.Thread | None = None
@@ -144,20 +151,41 @@ def _loop_automatico(cfg: dict):
 
 def iniciar_automatico():
     """Inicia o agendador se configurado para automático e destino definido."""
-    global _auto_thread
+    global _auto_thread, _sync_thread
     cfg = _carregar_cfg()
     if cfg["modo"] != "automatico" or not cfg["destino"]:
-        return
-    _auto_stop.clear()
-    _auto_thread = threading.Thread(target=_loop_automatico, args=(cfg,),
-                                    daemon=True, name="BackupPanel-Auto")
-    _auto_thread.start()
-    log.info("Backup automático (painel) iniciado -> %s a cada %.0fh",
-             cfg["destino"], cfg["intervalo_horas"])
+        pass
+    else:
+        _auto_stop.clear()
+        _auto_thread = threading.Thread(target=_loop_automatico, args=(cfg,),
+                                        daemon=True, name="BackupPanel-Auto")
+        _auto_thread.start()
+        log.info("Backup automático (painel) iniciado -> %s a cada %.0fh",
+                 cfg["destino"], cfg["intervalo_horas"])
+
+    if cfg.get("sync_auto"):
+        _sync_stop.clear()
+        _sync_thread = threading.Thread(target=_loop_sync_conhecimento, args=(cfg,),
+                                        daemon=True, name="KnowledgeSync-Auto")
+        _sync_thread.start()
+        log.info("Sync de conhecimento automático iniciado a cada %.0fh",
+                 cfg.get("sync_intervalo_horas", 24))
 
 
 def parar_automatico():
     _auto_stop.set()
+    _sync_stop.set()
+
+
+def _loop_sync_conhecimento(cfg: dict):
+    intervalo_s = int(cfg.get("sync_intervalo_horas", 24) * 3600)
+    while not _sync_stop.wait(intervalo_s):
+        try:
+            zip_path, _ = _ks.download_from_server()
+            novos, _ = _ks.import_knowledge(zip_path, _db.DB_PATH)
+            log.info("Sync automático de conhecimento: %d novos exemplos importados", novos)
+        except Exception as exc:
+            log.warning("Sync automático de conhecimento falhou: %s", exc)
 
 
 # ── Interface ──────────────────────────────────────────────────────────────────
@@ -300,6 +328,125 @@ def abrir_backup_panel(parent=None, sessao: dict | None = None):
                buttonbackground=CESC).pack(side="left", padx=(6, 0))
     tk.Label(frm_int, text="horas", font=FONT_L, bg=BG, fg=CINZA).pack(side="left", padx=(4, 0))
 
+    # ── Sincronização de Aprendizado ──────────────────────────────────────────
+    tk.Frame(corpo, bg=CESC, height=1).pack(fill="x", pady=(10, 6))
+    tk.Label(corpo, text="SINCRONIZAÇÃO DE APRENDIZADO (IA)",
+             font=("Segoe UI", 8, "bold"), bg=BG, fg=AMA).pack(anchor="w", pady=(0, 2))
+    tk.Label(
+        corpo,
+        text="Compartilha exemplos validados pelos operadores entre máquinas via servidor local.",
+        font=("Segoe UI", 7, "italic"), bg=BG, fg=CINZA,
+    ).pack(anchor="w", pady=(0, 6))
+
+    # Status do servidor (mostra data do último upload)
+    sv_srv = tk.StringVar(value="Verificando servidor...")
+    lbl_srv = tk.Label(corpo, textvariable=sv_srv, font=("Segoe UI", 8),
+                       bg=BG, fg=CINZA)
+    lbl_srv.pack(anchor="w", pady=(0, 6))
+
+    def _atualizar_status_servidor():
+        def _check():
+            meta = _ks.server_metadata()
+            if meta:
+                dt = meta.get("updated_at", "?")
+                sv_srv.set(f"Servidor: conhecimento disponível — atualizado em {dt}")
+                lbl_srv.config(fg=VERDE)
+            else:
+                sv_srv.set("Servidor: sem conhecimento publicado ou indisponível.")
+                lbl_srv.config(fg=CINZA)
+        threading.Thread(target=_check, daemon=True).start()
+
+    _atualizar_status_servidor()
+
+    # Sincronização automática
+    frm_sync_auto = tk.Frame(corpo, bg=BG)
+    frm_sync_auto.pack(anchor="w", pady=(0, 4))
+
+    var_sync_auto = tk.BooleanVar(value=cfg.get("sync_auto", False))
+    tk.Checkbutton(frm_sync_auto, text="Download automático de aprendizado",
+                   variable=var_sync_auto, font=FONT_L,
+                   bg=BG, fg=BCOR, selectcolor=CESC,
+                   activebackground=BG, activeforeground=BCOR,
+                   cursor="hand2").pack(side="left")
+
+    sv_sync_int = tk.StringVar(value=str(cfg.get("sync_intervalo_horas", 24)))
+    tk.Label(frm_sync_auto, text="a cada", font=FONT_L, bg=BG, fg=CINZA).pack(side="left", padx=(8, 4))
+    tk.Spinbox(frm_sync_auto, from_=1, to=168, textvariable=sv_sync_int,
+               width=4, font=FONT_M, bg=ENT, fg=BCOR,
+               insertbackground=AMA, relief="flat",
+               buttonbackground=CESC).pack(side="left")
+    tk.Label(frm_sync_auto, text="h", font=FONT_L, bg=BG, fg=CINZA).pack(side="left", padx=(2, 0))
+
+    # Botões de sync
+    ROXA = "#5544DD"
+    frm_sync_btns = tk.Frame(corpo, bg=BG)
+    frm_sync_btns.pack(anchor="w", pady=(6, 0))
+
+    sv_sync_status = tk.StringVar(value="")
+    lbl_sync_status = tk.Label(corpo, textvariable=sv_sync_status, font=FONT_L,
+                                bg=BG, fg=VERDE, wraplength=440, justify="left")
+
+    def _set_sync(msg: str, cor: str = VERDE):
+        _q.put(("sync_status", (msg, cor)))
+
+    def _enviar_aprendizado():
+        sv_sync_status.set("Exportando exemplos do banco local...")
+        lbl_sync_status.config(fg=AMA)
+        root.update_idletasks()
+
+        def _run():
+            try:
+                zip_path = _ks.export_knowledge(_db.DB_PATH)
+                _set_sync("Conectando ao servidor via SSH...")
+                _ks.upload_to_server(zip_path,
+                                     on_progress=lambda m: _set_sync(m, AMA))
+                # Relê contagem
+                import zipfile as _zf
+                with _zf.ZipFile(zip_path) as z:
+                    dados = json.loads(z.read("knowledge.json"))
+                    total = dados.get("total", 0)
+                zip_path.unlink(missing_ok=True)
+                zip_path.parent.rmdir()
+                _set_sync(f"Aprendizado enviado ao servidor! {total} exemplos publicados.")
+                _q.put(("srv_check", None))
+            except FileNotFoundError:
+                _set_sync("Erro: 'scp' não encontrado. Instale OpenSSH no sistema.", VERM)
+            except subprocess.CalledProcessError as exc:
+                _set_sync(f"Erro SSH/SCP: {exc.stderr.decode() if exc.stderr else exc}", VERM)
+            except Exception as exc:
+                _set_sync(f"Erro: {exc}", VERM)
+
+        threading.Thread(target=_run, daemon=True).start()
+
+    def _baixar_aprendizado():
+        _set_sync("Baixando aprendizado do servidor...", AMA)
+
+        def _run():
+            try:
+                zip_path, meta = _ks.download_from_server()
+                _set_sync("Importando exemplos para o banco local...", AMA)
+                novos, exist = _ks.import_knowledge(zip_path, _db.DB_PATH)
+                zip_path.unlink(missing_ok=True)
+                zip_path.parent.rmdir()
+                dt = meta.get("updated_at", "?")
+                _set_sync(
+                    f"Importação concluída!  {novos} novos exemplos adicionados"
+                    f"  ({exist} já existiam).\n"
+                    f"Publicado em: {dt}"
+                )
+            except Exception as exc:
+                _set_sync(f"Erro: {exc}", VERM)
+
+        threading.Thread(target=_run, daemon=True).start()
+
+    LARANJA = "#FF8800"
+    _btn(frm_sync_btns, " ↑ Enviar Aprendizado ",  _enviar_aprendizado,
+         bg=LARANJA, fg=BG).pack(side="left")
+    _btn(frm_sync_btns, " ↓ Baixar Aprendizado ",  _baixar_aprendizado,
+         bg=ROXA, fg=BCOR).pack(side="left", padx=(8, 0))
+
+    lbl_sync_status.pack(anchor="w", pady=(6, 0))
+
     # ── Status ─────────────────────────────────────────────────────────────────
     tk.Frame(corpo, bg=CESC, height=1).pack(fill="x", pady=(10, 0))
     sv_status = tk.StringVar(value="")
@@ -369,12 +516,19 @@ def abrir_backup_panel(parent=None, sessao: dict | None = None):
             lbl_status.config(fg=VERM)
             return
 
+        try:
+            sync_int = float(sv_sync_int.get())
+        except ValueError:
+            sync_int = 24.0
+
         nova_cfg = {
-            "destino":         dest,
-            "compactar":       var_zip.get(),
-            "modo":            var_modo.get(),
-            "intervalo_horas": inter,
-            "max_backups":     max_b,
+            "destino":              dest,
+            "compactar":            var_zip.get(),
+            "modo":                 var_modo.get(),
+            "intervalo_horas":      inter,
+            "max_backups":          max_b,
+            "sync_auto":            var_sync_auto.get(),
+            "sync_intervalo_horas": sync_int,
         }
         _salvar_cfg(nova_cfg)
 
@@ -403,6 +557,12 @@ def abrir_backup_panel(parent=None, sessao: dict | None = None):
                     lbl_status.config(fg=cor)
                 elif tipo == "historico":
                     _atualizar_historico()
+                elif tipo == "sync_status":
+                    msg, cor = dados
+                    sv_sync_status.set(msg)
+                    lbl_sync_status.config(fg=cor)
+                elif tipo == "srv_check":
+                    _atualizar_status_servidor()
         except _queue.Empty:
             pass
         try:
