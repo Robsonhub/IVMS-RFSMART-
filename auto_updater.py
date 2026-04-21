@@ -1,4 +1,9 @@
-"""Auto-update via GitHub Releases — SPARTA AGENTE IA."""
+"""Auto-update — SPARTA AGENTE IA.
+
+Provedor primário: servidor self-hosted (latest.json + .zip via HTTPS com
+certificate pinning). Fallback durante a release-ponte v1.1.5: GitHub Releases.
+"""
+import hashlib
 import json
 import logging
 import os
@@ -19,7 +24,12 @@ log = logging.getLogger(__name__)
 _TIMEOUT = 10
 
 
+_UPDATE_URL_DEFAULT = "https://138.186.129.103:4543/latest.json"
 _GITHUB_REPO_DEFAULT = "Robsonhub/IVMS-RFSMART-"
+
+
+def _update_url() -> str:
+    return os.getenv("UPDATE_SERVER_URL", _UPDATE_URL_DEFAULT)
 
 
 def _github_repo() -> str:
@@ -30,6 +40,16 @@ def _api_url() -> str:
     return f"https://api.github.com/repos/{_github_repo()}/releases/latest"
 
 
+def _cert_path() -> str | None:
+    """Localiza o certificado embarcado para pinning. Retorna None se ausente."""
+    if getattr(sys, "frozen", False):
+        base = Path(getattr(sys, "_MEIPASS", Path(sys.executable).parent))
+    else:
+        base = Path(__file__).parent
+    cert = base / "assets" / "update_server.crt"
+    return str(cert) if cert.exists() else None
+
+
 def _versao_para_tuple(v: str) -> tuple:
     try:
         return tuple(int(x) for x in v.lstrip("v").split("."))
@@ -37,18 +57,45 @@ def _versao_para_tuple(v: str) -> tuple:
         return (0,)
 
 
-def verificar_atualizacao() -> tuple[str, dict | str | None]:
-    """
-    Retorna (status, dado):
-      ("nao_configurado", None)  — GITHUB_REPO ausente no .env
-      ("erro", msg)              — falha de rede ou HTTP
-      ("sem_release", None)      — repositório sem releases publicadas
-      ("atualizado", None)       — versão local já é a mais recente
-      ("disponivel", dict)       — nova versão disponível
-    """
+def _verificar_servidor_local() -> tuple[str, dict | str | None]:
+    """Consulta latest.json no servidor self-hosted (com cert pinning)."""
+    url  = _update_url()
+    cert = _cert_path()
+    if not cert:
+        return ("erro", "Certificado update_server.crt ausente em assets/")
+
+    try:
+        resp = requests.get(url, timeout=_TIMEOUT, verify=cert)
+        resp.raise_for_status()
+        data = resp.json()
+    except Exception as exc:
+        log.warning("Servidor local falhou: %s", exc)
+        return ("erro", str(exc))
+
+    versao_remota = str(data.get("version", "")).lstrip("v")
+    url_download  = data.get("url", "")
+    sha256        = data.get("sha256", "")
+
+    if not versao_remota or versao_remota == "0.0.0" or not url_download:
+        return ("sem_release", None)
+
+    if _versao_para_tuple(versao_remota) <= _versao_para_tuple(VERSION):
+        return ("atualizado", None)
+
+    return ("disponivel", {
+        "versao":       versao_remota,
+        "url_download": url_download,
+        "notas":        str(data.get("notes", ""))[:500],
+        "tamanho":      int(data.get("size", 0)),
+        "sha256":       sha256,
+        "fonte":        "servidor",
+    })
+
+
+def _verificar_github() -> tuple[str, dict | str | None]:
+    """Fallback: API do GitHub Releases."""
     repo = _github_repo()
     if not repo:
-        log.warning("GITHUB_REPO não configurado — auto-update desabilitado")
         return ("nao_configurado", None)
 
     try:
@@ -59,7 +106,7 @@ def verificar_atualizacao() -> tuple[str, dict | str | None]:
         resp.raise_for_status()
         data = resp.json()
     except Exception as exc:
-        log.warning("Falha ao verificar atualizações: %s", exc)
+        log.warning("GitHub fallback falhou: %s", exc)
         return ("erro", str(exc))
 
     versao_remota = data.get("tag_name", "").lstrip("v")
@@ -67,7 +114,6 @@ def verificar_atualizacao() -> tuple[str, dict | str | None]:
         return ("sem_release", None)
 
     if _versao_para_tuple(versao_remota) <= _versao_para_tuple(VERSION):
-        log.info("Versão atual (%s) já é a mais recente.", VERSION)
         return ("atualizado", None)
 
     url_download = None
@@ -79,7 +125,6 @@ def verificar_atualizacao() -> tuple[str, dict | str | None]:
             break
 
     if not url_download:
-        log.warning("Release %s sem asset .zip", versao_remota)
         return ("sem_release", None)
 
     return ("disponivel", {
@@ -87,7 +132,31 @@ def verificar_atualizacao() -> tuple[str, dict | str | None]:
         "url_download": url_download,
         "notas":        data.get("body", "")[:500],
         "tamanho":      tamanho,
+        "sha256":       "",
+        "fonte":        "github",
     })
+
+
+def verificar_atualizacao() -> tuple[str, dict | str | None]:
+    """
+    Tenta o servidor self-hosted primeiro; em qualquer falha ou sem-release,
+    cai para a API do GitHub. Mantém o contrato:
+      ("nao_configurado", None)  — sem provedores válidos
+      ("erro", msg)              — todos provedores falharam
+      ("sem_release", None)      — nenhum provedor tem release publicada
+      ("atualizado", None)       — versão local já é a mais recente
+      ("disponivel", dict)       — nova versão disponível
+    """
+    status, dado = _verificar_servidor_local()
+    if status == "disponivel":
+        log.info("Update v%s encontrado no servidor local", dado["versao"])
+        return (status, dado)
+    if status == "atualizado":
+        log.info("Servidor local confirma versão atual (%s).", VERSION)
+        return (status, dado)
+
+    log.info("Servidor local indisponível (%s). Tentando GitHub...", status)
+    return _verificar_github()
 
 
 def _lançar_bat_updater(zip_path: str, app_dir: Path, versao: str) -> bool:
@@ -125,20 +194,27 @@ def baixar_e_aplicar(info: dict, progresso_cb=None) -> bool | str:
     - Modo dev: extrai diretamente e retorna True
     - Falha: retorna False
     """
-    url     = info["url_download"]
-    versao  = info["versao"]
-    frozen  = getattr(sys, "frozen", False)
-    app_dir = Path(sys.executable).parent if frozen else Path(".")
+    url        = info["url_download"]
+    versao     = info["versao"]
+    sha_esp    = (info.get("sha256") or "").lower().strip()
+    fonte      = info.get("fonte", "servidor")
+    frozen     = getattr(sys, "frozen", False)
+    app_dir    = Path(sys.executable).parent if frozen else Path(".")
 
-    log.info("Baixando atualização %s de %s", versao, url)
+    # Servidor self-hosted: usa cert pinning. GitHub: cadeia padrão (CA pública).
+    verify_arg = _cert_path() if fonte == "servidor" else True
+
+    log.info("Baixando atualização %s de %s (fonte=%s)", versao, url, fonte)
     try:
-        with requests.get(url, stream=True, timeout=60) as r:
+        sha = hashlib.sha256()
+        with requests.get(url, stream=True, timeout=60, verify=verify_arg) as r:
             r.raise_for_status()
             total    = int(r.headers.get("content-length", 0)) or info.get("tamanho", 1)
             baixado  = 0
             tmp      = tempfile.NamedTemporaryFile(suffix=".zip", delete=False)
             for chunk in r.iter_content(chunk_size=65536):
                 tmp.write(chunk)
+                sha.update(chunk)
                 baixado += len(chunk)
                 if progresso_cb and total:
                     progresso_cb(min(baixado / total, 1.0))
@@ -146,6 +222,18 @@ def baixar_e_aplicar(info: dict, progresso_cb=None) -> bool | str:
     except Exception as exc:
         log.error("Falha no download: %s", exc)
         return False
+
+    # Valida integridade quando o manifesto declarou SHA-256 (servidor local).
+    if sha_esp:
+        sha_obtido = sha.hexdigest().lower()
+        if sha_obtido != sha_esp:
+            log.error("SHA-256 divergente! esperado=%s obtido=%s", sha_esp, sha_obtido)
+            try:
+                os.unlink(tmp.name)
+            except Exception:
+                pass
+            return False
+        log.info("SHA-256 do .zip validado (%s).", sha_obtido[:16] + "...")
 
     # App frozen: não pode sobrescrever o próprio exe — usa bat externo
     if frozen:
@@ -343,12 +431,12 @@ def abrir_dialog_update(parent_tk=None):
             status, dado = verificar_atualizacao()
             if status == "nao_configurado":
                 _q.put(("status", ("⚙️", "Auto-update não configurado.",
-                                   "Adicione GITHUB_REPO ao arquivo .env.", CINZA)))
+                                   "Adicione UPDATE_SERVER_URL ao arquivo .env.", CINZA)))
             elif status == "erro":
                 _q.put(("status", ("⚠️", "Não foi possível verificar atualizações.",
                                    f"Erro: {dado}", VERM)))
             elif status == "sem_release":
-                _q.put(("status", ("ℹ️", "Nenhuma versão publicada no GitHub.",
+                _q.put(("status", ("ℹ️", "Nenhuma versão publicada.",
                                    "Aguarde a publicação de uma release.", CINZA)))
             elif status == "atualizado":
                 _q.put(("status", ("✅", "Você está na versão mais recente!",

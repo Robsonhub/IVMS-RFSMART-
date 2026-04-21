@@ -582,7 +582,7 @@ def abrir_api_panel(api_online: bool = True):
         ("Preço saída",     f"${_CUSTO_OUTPUT:.2f} / 1M tokens"),
         ("Cache entrada",   "~$0.30 / 1M tokens (economia ~90%)"),
         ("Endpoint",        "api.anthropic.com/v1/messages"),
-        ("Repositório",     env.get("GITHUB_REPO", "(não configurado)")),
+        ("Servidor update", env.get("UPDATE_SERVER_URL", "(não configurado)")),
         ("Status da API",   "ONLINE" if api_online else "OFFLINE"),
         ("Verificado em",   datetime.now().strftime("%d/%m/%Y %H:%M:%S")),
     ]

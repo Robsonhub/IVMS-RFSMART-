@@ -1,7 +1,7 @@
 ; Inno Setup 6 - SPARTA AGENTE IA
 
 #define AppName      "SPARTA AGENTE IA"
-#define AppVersion   "1.1.4"
+#define AppVersion   "1.1.5"
 #define AppPublisher "Tapete de Ouro - Seguranca Patrimonial"
 #define AppExeName   "MonitorTapeteOuro.exe"
 #define SourceDir    "dist\MonitorTapeteOuro"
@@ -25,9 +25,9 @@ PrivilegesRequired=lowest
 CloseApplications=yes
 Compression=lzma2/ultra64
 SolidCompression=yes
-VersionInfoVersion=1.1.4.0
+VersionInfoVersion=1.1.5.0
 VersionInfoProductName={#AppName}
-VersionInfoProductVersion=1.1.4.0
+VersionInfoProductVersion=1.1.5.0
 
 [Languages]
 Name: "ptbr"; MessagesFile: "compiler:Languages\BrazilianPortuguese.isl"
@@ -56,14 +56,14 @@ Type: dirifempty; Name: "{app}"
 
 [Code]
 const
-  GITHUB_REPO = 'Robsonhub/IVMS-RFSMART-';
+  UPDATE_SERVER_URL = 'https://138.186.129.103:4543/latest.json';
 
-procedure EnsureGithubRepo();
+procedure EnsureUpdateServer();
 var
   EnvFile, Content, NewLine: String;
 begin
   EnvFile := ExpandConstant('{app}\.env');
-  NewLine  := 'GITHUB_REPO=' + GITHUB_REPO;
+  NewLine  := 'UPDATE_SERVER_URL=' + UPDATE_SERVER_URL;
 
   if not FileExists(EnvFile) then
   begin
@@ -73,7 +73,7 @@ begin
 
   if LoadStringFromFile(EnvFile, Content) then
   begin
-    if Pos('GITHUB_REPO=', Content) = 0 then
+    if Pos('UPDATE_SERVER_URL=', Content) = 0 then
       SaveStringToFile(EnvFile, #13#10 + NewLine + #13#10, True);
   end;
 end;
@@ -81,6 +81,6 @@ end;
 procedure CurStepChanged(CurStep: TSetupStep);
 begin
   if CurStep = ssPostInstall then
-    EnsureGithubRepo();
+    EnsureUpdateServer();
 end;
 
