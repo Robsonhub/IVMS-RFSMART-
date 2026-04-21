@@ -78,9 +78,17 @@ def rodar():
             saiu  = processo.poll() is not None
             hb_ok = _heartbeat_ok() or time.time() < carencia
 
-            if saiu or not hb_ok:
-                motivo = "processo encerrado" if saiu else "heartbeat perdido"
-                log.warning("%s — reiniciando...", motivo)
+            if saiu:
+                codigo = processo.returncode
+                if codigo == 0:
+                    log.info("Filho encerrado normalmente (code 0) — watchdog encerra.")
+                    break
+                log.warning("Filho encerrado com code %d — reiniciando...", codigo)
+                time.sleep(3)
+                processo = _iniciar_processo()
+                carencia = time.time() + 60
+            elif not hb_ok:
+                log.warning("Heartbeat perdido — reiniciando...")
                 try:
                     processo.kill()
                 except Exception:
