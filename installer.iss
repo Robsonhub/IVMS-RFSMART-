@@ -1,7 +1,7 @@
 ; Inno Setup 6 - SPARTA AGENTE IA
 
 #define AppName      "SPARTA AGENTE IA"
-#define AppVersion   "1.1.5"
+#define AppVersion   "1.1.6"
 #define AppPublisher "Tapete de Ouro - Seguranca Patrimonial"
 #define AppExeName   "MonitorTapeteOuro.exe"
 #define SourceDir    "dist\MonitorTapeteOuro"
@@ -25,9 +25,9 @@ PrivilegesRequired=lowest
 CloseApplications=yes
 Compression=lzma2/ultra64
 SolidCompression=yes
-VersionInfoVersion=1.1.5.0
+VersionInfoVersion=1.1.6.0
 VersionInfoProductName={#AppName}
-VersionInfoProductVersion=1.1.5.0
+VersionInfoProductVersion=1.1.6.0
 
 [Languages]
 Name: "ptbr"; MessagesFile: "compiler:Languages\BrazilianPortuguese.isl"

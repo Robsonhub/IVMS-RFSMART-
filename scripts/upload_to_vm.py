@@ -21,6 +21,12 @@ import subprocess
 import sys
 from pathlib import Path
 
+# Força UTF-8 no stdout (evita UnicodeEncodeError no console Windows com cp1252).
+try:
+    sys.stdout.reconfigure(encoding="utf-8")
+except (AttributeError, ValueError):
+    pass
+
 
 def _ler_env_publish() -> dict[str, str]:
     env_path = Path(__file__).parent / ".env.publish"
@@ -47,11 +53,21 @@ def _sha256(caminho: Path) -> str:
     return h.hexdigest()
 
 
+def _ssh_args(env: dict) -> list[str]:
+    """Argumentos comuns do ssh/scp (chave + opts) — sem o destino/porta."""
+    args = []
+    key = env.get("VM_SSH_KEY", "").strip()
+    if key:
+        args += ["-i", os.path.expanduser(key)]
+    args += ["-o", "StrictHostKeyChecking=accept-new"]
+    return args
+
+
 def _run_ssh(env: dict, cmd: str) -> None:
     host  = f"{env['VM_USER']}@{env['VM_HOST']}"
     porta = env.get("VM_SSH_PORT", "22")
     subprocess.run(
-        ["ssh", "-p", str(porta), host, cmd],
+        ["ssh", "-p", str(porta), *_ssh_args(env), host, cmd],
         check=True,
     )
 
@@ -60,7 +76,7 @@ def _scp(env: dict, origem: Path, destino_remoto: str) -> None:
     host  = f"{env['VM_USER']}@{env['VM_HOST']}"
     porta = env.get("VM_SSH_PORT", "22")
     subprocess.run(
-        ["scp", "-P", str(porta), str(origem), f"{host}:{destino_remoto}"],
+        ["scp", "-P", str(porta), *_ssh_args(env), str(origem), f"{host}:{destino_remoto}"],
         check=True,
     )
 
@@ -87,9 +103,10 @@ def main() -> int:
     print(f"      {sha}")
 
     print(f"[2/5] Gerando latest.json local...")
+    base_url = env.get("VM_PUBLIC_URL_BASE", f"https://{env['VM_HOST']}").rstrip("/")
     manifesto = {
         "version": versao,
-        "url":     f"https://{env['VM_HOST']}/releases/v{versao}/{zip_path.name}",
+        "url":     f"{base_url}/releases/v{versao}/{zip_path.name}",
         "size":    zip_path.stat().st_size,
         "sha256":  sha,
         "notes":   notas,
@@ -114,10 +131,10 @@ def main() -> int:
                   f"{sudo}chown www-data:www-data {base_dir}/latest.json")
 
     print()
-    print(f"═══════════════════════════════════════════════════════════════")
+    print("=" * 63)
     print(f"  RELEASE v{versao} PUBLICADA NO SERVIDOR LOCAL")
-    print(f"  https://{env['VM_HOST']}/latest.json")
-    print(f"═══════════════════════════════════════════════════════════════")
+    print(f"  {base_url}/latest.json")
+    print("=" * 63)
     return 0
 
 
