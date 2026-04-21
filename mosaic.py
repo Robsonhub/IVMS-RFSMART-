@@ -15,6 +15,10 @@ from pathlib import Path
 import cv2
 import numpy as np
 
+# Limita OpenCV a 1 thread interno — soma aos flags `threads;1` do ffmpeg e
+# evita contenção de GIL com httpx (Claude API) durante cap.read().
+cv2.setNumThreads(1)
+
 try:
     from PIL import Image as _PilImg, ImageDraw as _PilDraw, ImageFont as _PilFont
     _PIL_OK = True

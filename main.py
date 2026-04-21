@@ -11,6 +11,11 @@ os.environ.setdefault(
     "rtsp_transport;tcp|threads;1",
 )
 
+# Reduz competição de GIL entre httpx (Claude API) e cv2.VideoCapture.read():
+# intervalo padrão de 5ms produzia corrida que derrubava o libavcodec logo
+# após o retorno do Haiku. 50ms dá tempo da thread C reaquisitar o GIL.
+sys.setswitchinterval(0.05)
+
 # Suprime crash do GC ao coletar StringVar/BooleanVar fora do loop Tkinter
 try:
     import tkinter as _tk

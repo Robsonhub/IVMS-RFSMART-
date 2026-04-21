@@ -1,3 +1,9 @@
+# PyTorch com suporte CUDA 12.1 — pin explícito na build +cu121 para que
+# o wheel CUDA seja sempre preferido ao CPU-only do PyPI. O mesmo wheel
+# roda em máquinas sem GPU (torch.cuda.is_available() retorna False e
+# cai para CPU), então um único bundle atende ambos os cenários.
+--extra-index-url https://download.pytorch.org/whl/cu121
+
 anthropic>=0.40.0
 opencv-python>=4.9.0
 python-dotenv>=1.0.0
@@ -6,3 +12,6 @@ onvif-zeep>=0.2.12
 ultralytics>=8.2.0
 deep-sort-realtime>=1.3.2
 psutil>=5.9.0
+torch==2.5.1+cu121
+torchvision==0.20.1+cu121
+pynvml>=11.5.0

@@ -47,6 +47,46 @@ def _cor_nivel(pct: float) -> str:
     return VERDE
 
 
+def _sugestoes_upgrade(d: dict) -> list[str]:
+    """Gera lista de sugestões de hardware (básico → profissional) conforme
+    os alertas disparados. Retorna linhas formatadas para exibição."""
+    linhas: list[str] = []
+
+    if not d.get("gpu_nome"):
+        linhas.append("── GPU (acelera YOLO / análise local) ──")
+        linhas.append("  • Básico:         GTX 1650 4 GB        — até 2 câm.")
+        linhas.append("  • Intermediário:  RTX 3060 12 GB       — até 6 câm.")
+        linhas.append("  • Avançado:       RTX 4070 12 GB       — até 10 câm.")
+        linhas.append("  • Profissional:   RTX 4090 24 GB / A4000 16 GB (24/7)")
+
+    if d.get("cpu_pct", 0) >= 75:
+        if linhas:
+            linhas.append("")
+        linhas.append("── CPU (captura + pré-processamento) ──")
+        linhas.append("  • Básico:         Intel i5-12400 / Ryzen 5 5600  (6 núcl.)")
+        linhas.append("  • Intermediário:  Intel i7-13700 / Ryzen 7 7700  (8-12 núcl.)")
+        linhas.append("  • Avançado:       Intel i9-13900K / Ryzen 9 7900X (16+ núcl.)")
+
+    if d.get("ram_pct", 0) >= 80:
+        if linhas:
+            linhas.append("")
+        linhas.append("── RAM (buffers de vídeo + modelos) ──")
+        linhas.append("  • Básico:         16 GB DDR4-3200")
+        linhas.append("  • Intermediário:  32 GB DDR4 / DDR5")
+        linhas.append("  • Avançado:       64 GB DDR5 (múltiplas câm. + YOLO large)")
+
+    disco_livre_gb = d.get("disco_livre", float("inf")) / 1024 ** 3
+    if disco_livre_gb < 15:
+        if linhas:
+            linhas.append("")
+        linhas.append("── Armazenamento (banco + clips de alerta) ──")
+        linhas.append("  • Básico:         SSD SATA 500 GB")
+        linhas.append("  • Intermediário:  SSD NVMe 1 TB Gen3")
+        linhas.append("  • Avançado:       SSD NVMe 2 TB Gen4 (retenção longa)")
+
+    return linhas
+
+
 def _fmt_bytes(b: int) -> str:
     for u in ("B", "KB", "MB", "GB", "TB"):
         if b < 1024:
@@ -292,7 +332,7 @@ def abrir_hardware_panel():
     cab.pack(fill="x")
     tk.Label(cab, text="Monitor de Hardware", font=FONT_T, bg=AMA, fg=BG).pack(side="left")
     sv_ts = tk.StringVar(value="")
-    tk.Label(cab, textvariable=sv_ts, font=FONT_S, bg=AMA, fg="#666600").pack(side="right")
+    tk.Label(cab, textvariable=sv_ts, font=FONT_S, bg=AMA, fg="#003B4D").pack(side="right")
 
     # ── Rodapé fixo ───────────────────────────────────────────────────────────
     frm_rod = tk.Frame(root, bg="#04080F", padx=20, pady=8)
@@ -523,6 +563,14 @@ def abrir_hardware_panel():
                            wraplength=440, justify="left")
     lbl_alertas.pack(anchor="w")
 
+    # Sugestões de upgrade (básico → profissional) — aparecem só quando há
+    # falta de algum hardware chave.
+    sv_sugestoes = tk.StringVar(value="")
+    lbl_sugestoes = tk.Label(frm_alertas, textvariable=sv_sugestoes,
+                             font=FONT_M, bg=BG_ROW, fg=CINZA,
+                             justify="left", anchor="w")
+    lbl_sugestoes.pack(anchor="w", pady=(6, 0), fill="x")
+
     # ── Queue e atualização ───────────────────────────────────────────────────
     _q: _queue.Queue = _queue.Queue()
 
@@ -678,7 +726,7 @@ def abrir_hardware_panel():
             alertas.append(f"⡐  Clips ocupando {clips_gb:.1f} GB — revise e limpe")
         gpu_nome = d.get("gpu_nome")
         if not gpu_nome:
-            alertas.append("ℹ  Sem GPU — adicione placa NVIDIA para análise mais precisa")
+            alertas.append("ℹ  Sem GPU — análise local em CPU (mais lenta). Sugestões de placa abaixo.")
 
         if alertas:
             sv_alertas.set("\n".join(alertas))
@@ -686,6 +734,9 @@ def abrir_hardware_panel():
         else:
             sv_alertas.set("✔  Tudo dentro dos limites normais.")
             lbl_alertas.config(fg=VERDE)
+
+        sugs = _sugestoes_upgrade(d)
+        sv_sugestoes.set("\n".join(sugs))
 
     # ── Inicia coleta ─────────────────────────────────────────────────────────
     _after_id[0] = root.after(200, _coletar_async)
