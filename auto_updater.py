@@ -164,9 +164,13 @@ def _lançar_bat_updater(zip_path: str, app_dir: Path, versao: str) -> bool:
     exe = str(Path(sys.executable))
     bat_path = Path(tempfile.gettempdir()) / "sparta_updater.bat"
 
+    exe_name = Path(exe).name
     conteudo = (
         "@echo off\n"
         "timeout /t 4 /nobreak >nul\n"
+        # Mata watchdog + qualquer instância restante (files em uso = acesso negado)
+        f"taskkill /F /IM \"{exe_name}\" /T >nul 2>&1\n"
+        "timeout /t 3 /nobreak >nul\n"
         f"powershell -NoProfile -Command \""
         f"Expand-Archive -LiteralPath '{zip_path}' "
         f"-DestinationPath '{app_dir}' -Force\"\n"
