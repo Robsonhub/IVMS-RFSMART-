@@ -4,26 +4,27 @@ from tkinter import messagebox
 
 import auth
 
-BG    = "#0F0F0F"
-BG2   = "#1A1A1A"
-BG3   = "#111111"
-AMA   = "#FFD000"
-AESC  = "#B39200"
-ENT   = "#242424"
-BCOR  = "#F0F0F0"
-CESC  = "#333333"
-VERM  = "#FF4444"
-VERDE = "#3DCC7E"
-CINZA = "#888888"
-AZUL  = "#4499FF"
+BG    = "#050A12"
+BG2   = "#08131E"
+BG3   = "#0A1520"
+AMA   = "#00D4FF"
+AESC  = "#007A9E"
+ENT   = "#0C1825"
+BCOR  = "#C8E8F8"
+CESC  = "#152030"
+VERM  = "#FF2255"
+VERDE = "#00CC77"
+CINZA = "#6A8098"
+AZUL  = "#2277EE"
 
 
 def _btn_factory(parent, texto: str, cmd, cor=AMA, pad_x=10, pad_y=6) -> tk.Label:
-    esc = {"#FFD000": "#B39200", "#FF4444": "#CC2222", "#336699": "#224477",
-           "#3DCC7E": "#28A060", "#4499FF": "#2277CC"}.get(cor, "#444444")
+    esc = {AMA: AESC, VERM: "#BB1144", "#155A8C": "#0E3D66",
+           VERDE: "#009955", AZUL: "#1A5FCC",
+           "#006677": "#00454D", "#991133": "#6B0A24"}.get(cor, "#0F1A28")
     b = tk.Label(parent, text=f"  {texto}  ",
                  font=("Segoe UI", 9, "bold"),
-                 bg=cor, fg=BG if cor == AMA else "#FFFFFF",
+                 bg=cor, fg=BG if cor == AMA else BCOR,
                  padx=pad_x, pady=pad_y, cursor="hand2", relief="flat")
     b.bind("<Button-1>", lambda _: cmd())
     b.bind("<Enter>",    lambda _: b.config(bg=esc))
@@ -48,7 +49,7 @@ def abrir_usuarios_panel(sessao: dict):
     tk.Label(cab, text="SPARTA  —  Gerenciamento de Usuarios",
              font=("Segoe UI", 11, "bold"), bg=AMA, fg=BG).pack(side="left")
     tk.Label(cab, text="Administrador",
-             font=("Segoe UI", 8), bg=AMA, fg="#665500").pack(side="right")
+             font=("Segoe UI", 8), bg=AMA, fg="#003B4D").pack(side="right")
 
     # ── Lista de usuarios ─────────────────────────────────────────────────────
     frm_lista = tk.Frame(root, bg=BG3, padx=12, pady=10)
@@ -97,7 +98,7 @@ def abrir_usuarios_panel(sessao: dict):
         selecionado[0] = uid
         for linha in linhas:
             ativo = linha["id"] == uid
-            bg = "#1A1A3A" if ativo else (BG2 if linhas.index(linha) % 2 == 0 else BG3)
+            bg = "#0E2A42" if ativo else (BG2 if linhas.index(linha) % 2 == 0 else BG3)
             fg = AMA if ativo else _cor_grupo(linha["grupo"])
             linha["row"].config(bg=bg)
             for w in linha["widgets"]:
@@ -256,9 +257,9 @@ def abrir_usuarios_panel(sessao: dict):
     tk.Label(frm_btns, text="Selecionado:  ", font=("Segoe UI", 8), bg=BG, fg=CINZA
              ).pack(side="left")
     _btn_factory(frm_btns, "Salvar Nome",    _salvar_nome_edit, cor=AZUL)
-    _btn_factory(frm_btns, "Redefinir Senha",_redefinir_senha,  cor="#336699")
-    _btn_factory(frm_btns, "Trocar Grupo",   _trocar_grupo,     cor="#556600")
-    _btn_factory(frm_btns, "Remover",        _remover,          cor="#882222")
+    _btn_factory(frm_btns, "Redefinir Senha",_redefinir_senha,  cor="#155A8C")
+    _btn_factory(frm_btns, "Trocar Grupo",   _trocar_grupo,     cor="#006677")
+    _btn_factory(frm_btns, "Remover",        _remover,          cor="#991133")
 
     root.update_idletasks()
     sw, sh = root.winfo_screenwidth(), root.winfo_screenheight()

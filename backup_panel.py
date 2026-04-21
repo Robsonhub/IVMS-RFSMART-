@@ -18,16 +18,17 @@ import data_export_panel as _exp
 
 log = logging.getLogger(__name__)
 
-BG       = "#0F0F0F"
-BG_CARD  = "#1A1A1A"
-AMA      = "#FFD000"
-AESC     = "#B39200"
-BCOR     = "#F0F0F0"
-CINZA    = "#888888"
-CESC     = "#333333"
-VERM     = "#FF4444"
-VERDE    = "#3DCC7E"
-AZUL     = "#336699"
+BG       = "#050A12"
+BG_CARD  = "#08131E"
+AMA      = "#00D4FF"
+AESC     = "#007A9E"
+ENT      = "#0C1825"
+BCOR     = "#C8E8F8"
+CINZA    = "#6A8098"
+CESC     = "#152030"
+VERM     = "#FF2255"
+VERDE    = "#00CC77"
+AZUL     = "#2277EE"
 
 FONT_T   = ("Segoe UI", 11, "bold")
 FONT_L   = ("Segoe UI", 9)
@@ -175,9 +176,9 @@ def _btn(pai, texto, cmd, bg=AMA, fg=BG, width=None):
     if width:
         kw["width"] = width
     hover = AESC if bg == AMA else (
-        "#2EAA66" if bg == VERDE else
-        "#CC2222" if bg == VERM else
-        "#4477BB" if bg == AZUL else "#555555"
+        "#009955" if bg == VERDE else
+        "#BB1144" if bg == VERM else
+        "#1A5FCC" if bg == AZUL else "#0F1A28"
     )
     b = tk.Label(pai, text=texto, font=FONT_B, bg=bg, fg=fg, cursor="hand2", **kw)
     b.bind("<Button-1>", lambda _: cmd())
@@ -188,7 +189,7 @@ def _btn(pai, texto, cmd, bg=AMA, fg=BG, width=None):
 
 def _entry(pai, var, width=36, ocultar=False):
     e = tk.Entry(pai, textvariable=var, show="*" if ocultar else "",
-                 font=FONT_M, bg="#242424", fg=BCOR,
+                 font=FONT_M, bg=ENT, fg=BCOR,
                  insertbackground=AMA, relief="flat", bd=0,
                  highlightthickness=1, highlightcolor=AMA,
                  highlightbackground=CESC, width=width)
@@ -214,7 +215,7 @@ def abrir_backup_panel(parent=None, sessao: dict | None = None):
     cab.pack(fill="x")
     tk.Label(cab, text="Backup Avançado", font=FONT_T, bg=AMA, fg=BG).pack(side="left")
     tk.Label(cab, text="(somente administrador)", font=("Segoe UI", 8),
-             bg=AMA, fg="#666600").pack(side="right")
+             bg=AMA, fg="#003B4D").pack(side="right")
 
     corpo = tk.Frame(root, bg=BG, padx=24, pady=16)
     corpo.pack(fill="both")
@@ -265,7 +266,7 @@ def abrir_backup_panel(parent=None, sessao: dict | None = None):
     tk.Label(frm_max, text="Manter últimos:", font=FONT_L, bg=BG, fg=BCOR).pack(side="left")
     sv_max = tk.StringVar(value=str(cfg["max_backups"]))
     tk.Spinbox(frm_max, from_=1, to=100, textvariable=sv_max, width=5,
-               font=FONT_M, bg="#242424", fg=BCOR,
+               font=FONT_M, bg=ENT, fg=BCOR,
                insertbackground=AMA, relief="flat",
                buttonbackground=CESC).pack(side="left", padx=(6, 0))
     tk.Label(frm_max, text="arquivos", font=FONT_L, bg=BG, fg=CINZA).pack(side="left", padx=(4, 0))
@@ -294,7 +295,7 @@ def abrir_backup_panel(parent=None, sessao: dict | None = None):
              bg=BG, fg=BCOR).pack(side="left")
     sv_int = tk.StringVar(value=str(cfg["intervalo_horas"]))
     tk.Spinbox(frm_int, from_=1, to=168, increment=1, textvariable=sv_int,
-               width=5, font=FONT_M, bg="#242424", fg=BCOR,
+               width=5, font=FONT_M, bg=ENT, fg=BCOR,
                insertbackground=AMA, relief="flat",
                buttonbackground=CESC).pack(side="left", padx=(6, 0))
     tk.Label(frm_int, text="horas", font=FONT_L, bg=BG, fg=CINZA).pack(side="left", padx=(4, 0))
@@ -598,7 +599,7 @@ def abrir_backup_panel(parent=None, sessao: dict | None = None):
     _btn(frm_btns, " Listar ",          _atualizar_historico,
          bg=CESC, fg=BCOR).pack(side="left", padx=(6, 0))
 
-    ROXO = "#7744CC"
+    ROXO = "#5544DD"
     def _abrir_export():
         _exp.abrir_export_panel(parent=root, sessao=sessao)
 
