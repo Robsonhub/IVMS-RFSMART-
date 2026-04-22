@@ -1,10 +1,17 @@
 """CameraSlot — captura de frame RTSP por câmera com análise local de movimento."""
 import logging
+import os
 import threading
 import time
 
 import cv2
 import numpy as np
+
+# Força transporte TCP para RTSP (evita bloqueio de portas UDP em redes com NAT/firewall)
+os.environ.setdefault(
+    "OPENCV_FFMPEG_CAPTURE_OPTIONS",
+    "rtsp_transport;tcp|timeout;15000000",  # timeout em µs (15 s)
+)
 
 from local_analyzer import AnalisadorLocal
 from mosaic_constants import CAP_W, CAP_H
@@ -170,10 +177,11 @@ class CameraSlot:
                     old_cap.release()
                 except Exception:
                     pass
-            new_cap = cv2.VideoCapture(uri)
-            new_cap.set(cv2.CAP_PROP_OPEN_TIMEOUT_MSEC, 8000)
-            new_cap.set(cv2.CAP_PROP_READ_TIMEOUT_MSEC, 8000)
+            new_cap = cv2.VideoCapture()
+            new_cap.set(cv2.CAP_PROP_OPEN_TIMEOUT_MSEC, 15_000)
+            new_cap.set(cv2.CAP_PROP_READ_TIMEOUT_MSEC, 15_000)
             new_cap.set(cv2.CAP_PROP_BUFFERSIZE, 1)
+            new_cap.open(uri, cv2.CAP_FFMPEG)
             with self._lock:
                 self._cap = new_cap
             if not new_cap.isOpened():
