@@ -301,14 +301,17 @@ def import_knowledge(zip_path: Path, db_path: Path) -> tuple[int, int]:
                 existentes += 1
                 continue
 
-            # Cria registro sintético em analises para satisfazer FK
+            # Cria registro sintético em analises para satisfazer FK e NOT NULL
+            ts_agora = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
             cur = con.execute(
                 """INSERT INTO analises
-                   (camera_id, nivel_risco, comportamentos, alerta,
-                    acao_recomendada, confianca, tokens_in, tokens_out)
-                   VALUES (?, ?, ?, 0, ?, 0.9, 0, 0)""",
+                   (frame_id, camera_id, timestamp_analise, nivel_risco,
+                    comportamentos, alerta, confianca, acao_recomendada)
+                   VALUES (?, ?, ?, ?, ?, 0, 0.9, ?)""",
                 (
+                    f"KNOWLEDGE:{h}",
                     f"KNOWLEDGE:{ex.get('camera_origem', 'importado')}",
+                    ex.get("created_at") or ts_agora,
                     ex["nivel_risco"],
                     ex["comportamentos"],
                     ex.get("acao_recomendada", ""),

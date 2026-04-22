@@ -4,6 +4,7 @@ import logging
 import queue as _queue
 import shutil
 import sqlite3
+import subprocess
 import threading
 import time
 import zipfile
@@ -46,13 +47,19 @@ _DEFAULT_CFG = {
     "modo":                 "manual",       # "manual" | "automatico"
     "intervalo_horas":      6.0,
     "max_backups":          20,
-    "sync_auto":            False,
-    "sync_intervalo_horas": 24.0,
+    "sync_auto":               False,
+    "sync_intervalo_horas":    24.0,
+    "sync_auto_envio":         False,
+    "sync_envio_intervalo_horas": 24.0,
 }
 
 # Thread do agendador de sync de aprendizado (singleton)
 _sync_thread: threading.Thread | None = None
 _sync_stop   = threading.Event()
+
+# Thread do agendador de envio automático de aprendizado
+_sync_envio_thread: threading.Thread | None = None
+_sync_envio_stop   = threading.Event()
 
 # Thread do agendador automático (singleton)
 _auto_thread: threading.Thread | None = None
@@ -151,7 +158,7 @@ def _loop_automatico(cfg: dict):
 
 def iniciar_automatico():
     """Inicia o agendador se configurado para automático e destino definido."""
-    global _auto_thread, _sync_thread
+    global _auto_thread, _sync_thread, _sync_envio_thread
     cfg = _carregar_cfg()
     if cfg["modo"] != "automatico" or not cfg["destino"]:
         pass
@@ -171,10 +178,19 @@ def iniciar_automatico():
         log.info("Sync de conhecimento automático iniciado a cada %.0fh",
                  cfg.get("sync_intervalo_horas", 24))
 
+    if cfg.get("sync_auto_envio"):
+        _sync_envio_stop.clear()
+        _sync_envio_thread = threading.Thread(target=_loop_envio_conhecimento, args=(cfg,),
+                                              daemon=True, name="KnowledgeSend-Auto")
+        _sync_envio_thread.start()
+        log.info("Envio automático de conhecimento iniciado a cada %.0fh",
+                 cfg.get("sync_envio_intervalo_horas", 24))
+
 
 def parar_automatico():
     _auto_stop.set()
     _sync_stop.set()
+    _sync_envio_stop.set()
 
 
 def _loop_sync_conhecimento(cfg: dict):
@@ -186,6 +202,19 @@ def _loop_sync_conhecimento(cfg: dict):
             log.info("Sync automático de conhecimento: %d novos exemplos importados", novos)
         except Exception as exc:
             log.warning("Sync automático de conhecimento falhou: %s", exc)
+
+
+def _loop_envio_conhecimento(cfg: dict):
+    intervalo_s = int(cfg.get("sync_envio_intervalo_horas", 24) * 3600)
+    while not _sync_envio_stop.wait(intervalo_s):
+        try:
+            zip_path = _ks.export_knowledge(_db.DB_PATH)
+            _ks.upload_to_server(zip_path)
+            zip_path.unlink(missing_ok=True)
+            zip_path.parent.rmdir()
+            log.info("Envio automático de conhecimento concluído.")
+        except Exception as exc:
+            log.warning("Envio automático de conhecimento falhou: %s", exc)
 
 
 # ── Interface ──────────────────────────────────────────────────────────────────
@@ -377,6 +406,25 @@ def abrir_backup_panel(parent=None, sessao: dict | None = None):
                buttonbackground=CESC).pack(side="left")
     tk.Label(frm_sync_auto, text="h", font=FONT_L, bg=BG, fg=CINZA).pack(side="left", padx=(2, 0))
 
+    # Envio automático
+    frm_sync_envio = tk.Frame(corpo, bg=BG)
+    frm_sync_envio.pack(anchor="w", pady=(0, 4))
+
+    var_sync_auto_envio = tk.BooleanVar(value=cfg.get("sync_auto_envio", False))
+    tk.Checkbutton(frm_sync_envio, text="Envio automático de aprendizado",
+                   variable=var_sync_auto_envio, font=FONT_L,
+                   bg=BG, fg=BCOR, selectcolor=CESC,
+                   activebackground=BG, activeforeground=BCOR,
+                   cursor="hand2").pack(side="left")
+
+    sv_sync_envio_int = tk.StringVar(value=str(cfg.get("sync_envio_intervalo_horas", 24)))
+    tk.Label(frm_sync_envio, text="a cada", font=FONT_L, bg=BG, fg=CINZA).pack(side="left", padx=(8, 4))
+    tk.Spinbox(frm_sync_envio, from_=1, to=168, textvariable=sv_sync_envio_int,
+               width=4, font=FONT_M, bg=ENT, fg=BCOR,
+               insertbackground=AMA, relief="flat",
+               buttonbackground=CESC).pack(side="left")
+    tk.Label(frm_sync_envio, text="h", font=FONT_L, bg=BG, fg=CINZA).pack(side="left", padx=(2, 0))
+
     # Botões de sync
     ROXA = "#5544DD"
     frm_sync_btns = tk.Frame(corpo, bg=BG)
@@ -521,25 +569,42 @@ def abrir_backup_panel(parent=None, sessao: dict | None = None):
         except ValueError:
             sync_int = 24.0
 
+        try:
+            sync_envio_int = float(sv_sync_envio_int.get())
+        except ValueError:
+            sync_envio_int = 24.0
+
         nova_cfg = {
-            "destino":              dest,
-            "compactar":            var_zip.get(),
-            "modo":                 var_modo.get(),
-            "intervalo_horas":      inter,
-            "max_backups":          max_b,
-            "sync_auto":            var_sync_auto.get(),
-            "sync_intervalo_horas": sync_int,
+            "destino":                    dest,
+            "compactar":                  var_zip.get(),
+            "modo":                       var_modo.get(),
+            "intervalo_horas":            inter,
+            "max_backups":                max_b,
+            "sync_auto":                  var_sync_auto.get(),
+            "sync_intervalo_horas":       sync_int,
+            "sync_auto_envio":            var_sync_auto_envio.get(),
+            "sync_envio_intervalo_horas": sync_envio_int,
         }
         _salvar_cfg(nova_cfg)
 
         parar_automatico()
+        msgs = []
         if nova_cfg["modo"] == "automatico":
             _auto_stop.clear()
             threading.Thread(target=_loop_automatico, args=(nova_cfg,),
                              daemon=True, name="BackupPanel-Auto").start()
-            sv_status.set(f"Configuração salva. Backup automático ativo a cada {inter:.0f}h.")
-        else:
-            sv_status.set("Configuração salva.")
+            msgs.append(f"Backup automático a cada {inter:.0f}h")
+        if nova_cfg["sync_auto"]:
+            _sync_stop.clear()
+            threading.Thread(target=_loop_sync_conhecimento, args=(nova_cfg,),
+                             daemon=True, name="KnowledgeSync-Auto").start()
+            msgs.append(f"download de aprendizado a cada {sync_int:.0f}h")
+        if nova_cfg["sync_auto_envio"]:
+            _sync_envio_stop.clear()
+            threading.Thread(target=_loop_envio_conhecimento, args=(nova_cfg,),
+                             daemon=True, name="KnowledgeSend-Auto").start()
+            msgs.append(f"envio de aprendizado a cada {sync_envio_int:.0f}h")
+        sv_status.set("Configuração salva." + (f" Ativo: {', '.join(msgs)}." if msgs else ""))
         lbl_status.config(fg=VERDE)
         _atualizar_historico()
 
@@ -758,13 +823,6 @@ def abrir_backup_panel(parent=None, sessao: dict | None = None):
          bg=VERM, fg=BCOR).pack(side="left", padx=(6, 0))
     _btn(frm_btns, " Listar ",          _atualizar_historico,
          bg=CESC, fg=BCOR).pack(side="left", padx=(6, 0))
-
-    ROXO = "#5544DD"
-    def _abrir_export():
-        _exp.abrir_export_panel(parent=root, sessao=sessao)
-
-    _btn(frm_btns, " Exportar p/ Dev ",  _abrir_export,
-         bg=ROXO, fg=BCOR).pack(side="left", padx=(6, 0))
 
     _btn(frm_btns, " Fechar ",          _fechar,
          bg=CESC, fg=BCOR).pack(side="right")
