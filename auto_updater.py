@@ -161,30 +161,44 @@ def verificar_atualizacao() -> tuple[str, dict | str | None]:
 
 def _lançar_bat_updater(zip_path: str, app_dir: Path, versao: str) -> bool:
     """Escreve bat no temp e o lança como processo independente para extrair após o app fechar."""
-    exe = str(Path(sys.executable))
-    bat_path = Path(tempfile.gettempdir()) / "sparta_updater.bat"
-
+    exe      = str(Path(sys.executable))
     exe_name = Path(exe).name
+    bat_path = Path(tempfile.gettempdir()) / "sparta_updater.bat"
+    log_path = Path(tempfile.gettempdir()) / "sparta_updater.log"
+
+    # Usa variáveis de bat para evitar problemas com aspas em caminhos com espaço
     conteudo = (
         "@echo off\n"
+        f"set ZIP={zip_path}\n"
+        f"set DST={app_dir}\n"
+        f"set EXE={exe}\n"
+        f"set LOG={log_path}\n"
+        "echo [%DATE% %TIME%] Updater iniciado > \"%LOG%\"\n"
         "timeout /t 4 /nobreak >nul\n"
-        # Mata watchdog + qualquer instância restante (files em uso = acesso negado)
-        f"taskkill /F /IM \"{exe_name}\" /T >nul 2>&1\n"
+        f"taskkill /F /IM \"{exe_name}\" /T >> \"%LOG%\" 2>&1\n"
         "timeout /t 3 /nobreak >nul\n"
-        f"powershell -NoProfile -Command \""
-        f"Expand-Archive -LiteralPath '{zip_path}' "
-        f"-DestinationPath '{app_dir}' -Force\"\n"
-        f"start \"\" \"{exe}\"\n"
-        f"del \"{zip_path}\"\n"
+        "echo [%DATE% %TIME%] Extraindo zip >> \"%LOG%\"\n"
+        "powershell -NoProfile -ExecutionPolicy Bypass -Command "
+        "\"try { Expand-Archive -LiteralPath $env:ZIP -DestinationPath $env:DST -Force;"
+        " Write-Host OK } catch { Write-Host $_.Exception.Message; exit 1 }\""
+        " >> \"%LOG%\" 2>&1\n"
+        "if %errorlevel% neq 0 (\n"
+        "  echo [%DATE% %TIME%] ERRO na extracao - abortando >> \"%LOG%\"\n"
+        "  exit /b 1\n"
+        ")\n"
+        "echo [%DATE% %TIME%] Extracao OK >> \"%LOG%\"\n"
+        "del \"%ZIP%\"\n"
+        "start \"\" \"%EXE%\"\n"
         "del \"%~f0\"\n"
     )
     try:
-        bat_path.write_text(conteudo, encoding="utf-8")
+        bat_path.write_text(conteudo, encoding="cp1252")  # cmd.exe usa cp1252 no Windows
         subprocess.Popen(
             ["cmd", "/c", str(bat_path)],
             creationflags=subprocess.DETACHED_PROCESS | subprocess.CREATE_NEW_PROCESS_GROUP,
         )
-        log.info("Atualizador lançado — app encerrará para aplicar v%s", versao)
+        log.info("Atualizador lançado — app encerrará para aplicar v%s (log: %s)",
+                 versao, log_path)
         return True
     except Exception as exc:
         log.error("Falha ao lançar bat updater: %s", exc)

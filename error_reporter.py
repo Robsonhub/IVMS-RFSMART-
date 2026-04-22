@@ -100,13 +100,13 @@ def gerar_zip_relatorio(motivo: str = "manual", extra: dict | None = None) -> Pa
 
 
 def exportar_relatorio(destino: Path | None = None) -> Path | None:
-    """Gera zip e salva em *destino* (ou na Área de Trabalho). Retorna caminho ou None."""
+    """Gera zip e salva em *destino* (ou em Documents/SPARTA_Relatorios). Retorna caminho ou None."""
     try:
         zip_tmp = gerar_zip_relatorio("exportacao_manual")
         if destino is None:
-            desktop = Path.home() / "Desktop"
-            desktop.mkdir(exist_ok=True)
-            destino = desktop / zip_tmp.name
+            pasta   = Path.home() / "Documents" / "SPARTA_Relatorios"
+            pasta.mkdir(parents=True, exist_ok=True)
+            destino = pasta / zip_tmp.name
         import shutil
         shutil.move(str(zip_tmp), str(destino))
         log.info("Relatório exportado: %s", destino)
@@ -240,10 +240,16 @@ def relatar_automatico(motivo: str, extra: dict | None = None) -> None:
 
 # ── Painel Tkinter ────────────────────────────────────────────────────────────
 
+def _pasta_relatorios() -> Path:
+    """Pasta fixa onde os relatórios exportados são salvos."""
+    p = Path.home() / "Documents" / "SPARTA_Relatorios"
+    p.mkdir(parents=True, exist_ok=True)
+    return p
+
+
 def abrir_painel_relatorio(parent_tk=None):
-    """Janela para envio manual e exportação de relatórios."""
+    """Janela de feedback para o operador — simples, sem detalhes técnicos."""
     import tkinter as tk
-    from tkinter import filedialog, messagebox
 
     from version import APP_NAME
 
@@ -255,7 +261,7 @@ def abrir_painel_relatorio(parent_tk=None):
     BCOR  = "#F0F0F0"
 
     root = tk.Toplevel(parent_tk) if parent_tk else tk.Tk()
-    root.title(f"{APP_NAME} — Relatório de Erros")
+    root.title(f"{APP_NAME} — Relatorio de Erros")
     root.configure(bg=BG)
     root.resizable(False, False)
     root.attributes("-topmost", True)
@@ -263,7 +269,7 @@ def abrir_painel_relatorio(parent_tk=None):
 
     cab = tk.Frame(root, bg=AMA, padx=16, pady=8)
     cab.pack(fill="x")
-    tk.Label(cab, text="Relatório de Erros / Bugs",
+    tk.Label(cab, text="Relatorio de Erros / Melhorias",
              font=("Segoe UI", 11, "bold"), bg=AMA, fg=BG).pack(side="left")
     tk.Label(cab, text=f"v{VERSION}",
              font=("Segoe UI", 9), bg=AMA, fg="#666600").pack(side="right")
@@ -271,29 +277,19 @@ def abrir_painel_relatorio(parent_tk=None):
     corpo = tk.Frame(root, bg=BG, padx=24, pady=16)
     corpo.pack(fill="both")
 
-    sv_status = tk.StringVar(value="")
-    sv_token  = tk.StringVar(value=_github_token() or "")
-
-    # ── Token ──────────────────────────────────────────────────────────────
-    tk.Label(corpo, text="GitHub Token (opcional para envio ao repositório):",
-             font=("Segoe UI", 8), bg=BG, fg=CINZA, anchor="w").pack(fill="x")
-    ent_token = tk.Entry(corpo, textvariable=sv_token, font=("Consolas", 9),
-                         bg="#1A1A1A", fg=BCOR, insertbackground=BCOR,
-                         relief="flat", show="*")
-    ent_token.pack(fill="x", pady=(2, 12))
-
-    # ── Descrição ──────────────────────────────────────────────────────────
-    tk.Label(corpo, text="Descrição do problema (opcional):",
-             font=("Segoe UI", 8), bg=BG, fg=CINZA, anchor="w").pack(fill="x")
-    txt_desc = tk.Text(corpo, height=4, font=("Segoe UI", 9),
+    tk.Label(corpo,
+             text="Descreva o que aconteceu ou o que pode ser melhorado:",
+             font=("Segoe UI", 9), bg=BG, fg=CINZA, anchor="w").pack(fill="x")
+    txt_desc = tk.Text(corpo, height=5, font=("Segoe UI", 10),
                        bg="#1A1A1A", fg=BCOR, insertbackground=BCOR,
                        relief="flat", wrap="word")
-    txt_desc.pack(fill="x", pady=(2, 12))
+    txt_desc.pack(fill="x", pady=(4, 12))
+    txt_desc.focus_set()
 
-    # ── Status ─────────────────────────────────────────────────────────────
+    sv_status = tk.StringVar(value="")
     lbl_status = tk.Label(corpo, textvariable=sv_status,
                           font=("Segoe UI", 9), bg=BG, fg=VERDE,
-                          wraplength=380, justify="left")
+                          wraplength=400, justify="left")
     lbl_status.pack(fill="x", pady=(0, 8))
 
     def _set_status(msg: str, cor: str = VERDE):
@@ -302,29 +298,37 @@ def abrir_painel_relatorio(parent_tk=None):
 
     def _extra() -> dict:
         desc = txt_desc.get("1.0", "end").strip()
-        return {"descricao_usuario": desc} if desc else {}
+        return {"descricao_operador": desc} if desc else {}
 
     def _enviar():
-        token_ui = sv_token.get().strip()
-        if token_ui:
-            os.environ["GITHUB_TOKEN"] = token_ui
-        _set_status("Gerando relatório...", AMA)
+        _set_status("Gerando relatorio...", AMA)
         root.update()
 
         def _run():
             zip_path = None
             try:
-                zip_path = gerar_zip_relatorio("envio_manual", _extra())
-                ok = enviar_relatorio_github(zip_path, "envio_manual")
-                if ok:
-                    root.after(0, lambda: _set_status(
-                        "✔ Relatório enviado ao repositório GitHub.", VERDE))
+                extra    = _extra()
+                zip_path = gerar_zip_relatorio("envio_operador", extra)
+                # Sempre salva cópia local
+                pasta  = _pasta_relatorios()
+                local  = pasta / zip_path.name
+                import shutil
+                shutil.copy2(str(zip_path), str(local))
+                # Tenta enviar ao repositório se token configurado
+                tem_token = bool(_github_token())
+                if tem_token:
+                    ok = enviar_relatorio_github(zip_path, "envio_operador")
+                    if ok:
+                        root.after(0, lambda: _set_status(
+                            "Relatorio enviado e salvo em:\n" + str(local), VERDE))
+                    else:
+                        root.after(0, lambda: _set_status(
+                            "Enviado localmente (falha no envio remoto):\n" + str(local), AMA))
                 else:
                     root.after(0, lambda: _set_status(
-                        "✘ Falha no envio. Verifique o Token e a conexão.\n"
-                        "Use 'Exportar' para salvar localmente.", VERM))
+                        "Relatorio salvo em:\n" + str(local), VERDE))
             except Exception as exc:
-                root.after(0, lambda: _set_status(f"✘ Erro: {exc}", VERM))
+                root.after(0, lambda: _set_status(f"Erro: {exc}", VERM))
             finally:
                 if zip_path and zip_path.exists():
                     try:
@@ -335,43 +339,36 @@ def abrir_painel_relatorio(parent_tk=None):
         threading.Thread(target=_run, daemon=True).start()
 
     def _exportar():
-        destino_str = filedialog.asksaveasfilename(
-            parent=root,
-            title="Salvar relatório como",
-            defaultextension=".zip",
-            filetypes=[("ZIP", "*.zip")],
-            initialfile=f"sparta_relatorio_{datetime.now().strftime('%Y%m%d_%H%M%S')}.zip",
-        )
-        if not destino_str:
-            return
         _set_status("Exportando...", AMA)
         root.update()
-        destino = exportar_relatorio(Path(destino_str))
+        pasta   = _pasta_relatorios()
+        nome    = f"sparta_relatorio_{datetime.now().strftime('%Y%m%d_%H%M%S')}.zip"
+        destino = exportar_relatorio(pasta / nome)
         if destino:
-            _set_status(f"✔ Relatório salvo em:\n{destino}", VERDE)
+            _set_status("Relatorio salvo em:\n" + str(destino), VERDE)
         else:
-            _set_status("✘ Falha ao exportar.", VERM)
+            _set_status("Falha ao exportar.", VERM)
 
     frm_btns = tk.Frame(corpo, bg=BG)
     frm_btns.pack(fill="x", pady=(4, 0))
 
     def _btn(parent, txt, cor, cmd):
+        esc = {"#3DCC7E": "#2EAA66", "#FFD000": "#BB9900"}.get(cor, "#555555")
         b = tk.Label(parent, text=txt, font=("Segoe UI", 10, "bold"),
                      bg=cor, fg=BG, padx=12, pady=8, cursor="hand2")
-        esc = "#2EAA66" if cor == VERDE else "#CC3333" if cor == VERM else "#BB9900"
         b.bind("<Enter>", lambda _: b.config(bg=esc))
         b.bind("<Leave>", lambda _: b.config(bg=cor))
         b.bind("<Button-1>", lambda _: cmd())
         b.pack(side="left", padx=(0, 8))
         return b
 
-    _btn(frm_btns, "  Enviar ao GitHub  ", VERDE, _enviar)
-    _btn(frm_btns, "  Exportar ZIP  ",     AMA,   _exportar)
-    _btn(frm_btns, "  Fechar  ",           "#444444", root.destroy)
+    _btn(frm_btns, "  Enviar Relatorio  ", VERDE,     _enviar)
+    _btn(frm_btns, "  Exportar ZIP  ",     AMA,       _exportar)
+    _btn(frm_btns, "  Fechar  ",           "#444444",  root.destroy)
 
     root.protocol("WM_DELETE_WINDOW", root.destroy)
     root.update_idletasks()
     w, h = root.winfo_reqwidth(), root.winfo_reqheight()
     sw, sh = root.winfo_screenwidth(), root.winfo_screenheight()
-    root.geometry(f"{max(w, 420)}x{h}+{(sw - max(w, 420)) // 2}+{(sh - h) // 2}")
+    root.geometry(f"{max(w, 440)}x{h}+{(sw - max(w, 440)) // 2}+{(sh - h) // 2}")
     root.wait_window()

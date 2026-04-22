@@ -1378,7 +1378,7 @@ def _menu_items(is_admin: bool) -> list:
         {"label": "Backup",   "action": "backup",   "cor": (255, 210, 160)},
         {"label": "Atualizar", "action": "update",    "cor": (160, 210, 255)},
         {"label": "Hardware",  "action": "hardware",  "cor": (210, 190, 255)},
-        {"label": "Relatório", "action": "relatorio", "cor": (255, 180, 180)},
+        {"label": "Relatorio",  "action": "relatorio", "cor": (255, 180, 180)},
         {"sep": True},
         {"label": "Treinar",   "action": "treinar",   "cor": (195, 240, 255)},
         {"sep": True},
