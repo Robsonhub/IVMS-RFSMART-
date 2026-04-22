@@ -26,8 +26,10 @@ from version import VERSION
 
 log = logging.getLogger(__name__)
 
-_LIMITE_GB    = 10
+_LIMITE_GB    = 10          # dispara limpeza quando total ultrapassa esse valor
+_ALVO_GB      = 7           # limpa até esse patamar, deixando ~3 GB de buffer livre
 _LIMITE_BYTES = _LIMITE_GB * 1024 ** 3
+_ALVO_BYTES   = _ALVO_GB   * 1024 ** 3
 _TAG_RELEASE  = "bug-reports"
 _TIMEOUT      = 30
 
@@ -148,7 +150,11 @@ def _garantir_release(api: str) -> int | None:
 
 
 def _rotacionar_assets(api: str, release_id: int) -> None:
-    """Remove assets mais antigos se total ultrapassar LIMITE_GB."""
+    """Remove assets mais antigos quando total ultrapassa LIMITE_GB.
+
+    Ao limpar, vai até ALVO_GB (não apenas até o limite), garantindo
+    buffer de ~3 GB para novas entradas sem lotar imediatamente.
+    """
     hdrs = _headers()
     try:
         r = requests.get(f"{api}/releases/{release_id}/assets",
@@ -156,12 +162,21 @@ def _rotacionar_assets(api: str, release_id: int) -> None:
         r.raise_for_status()
         assets = sorted(r.json(), key=lambda a: a["created_at"])
         total  = sum(a["size"] for a in assets)
-        while total > _LIMITE_BYTES and assets:
+        if total <= _LIMITE_BYTES:
+            return  # dentro do limite, nada a fazer
+        log.info("Relatórios: %.1f GB > limite %d GB — limpando até %d GB (buffer livre ~%d GB)",
+                 total / 1024**3, _LIMITE_GB, _ALVO_GB, _LIMITE_GB - _ALVO_GB)
+        removidos = 0
+        while total > _ALVO_BYTES and assets:
             a = assets.pop(0)
             requests.delete(f"{api}/releases/assets/{a['id']}",
                             headers=hdrs, timeout=_TIMEOUT)
             total -= a["size"]
-            log.info("Rotacionado asset antigo: %s (%.1f MB)", a["name"], a["size"] / 1e6)
+            removidos += 1
+            log.info("  Removido: %s (%.1f MB) — restante: %.1f GB",
+                     a["name"], a["size"] / 1e6, total / 1024**3)
+        log.info("Rotação concluída: %d relatório(s) removido(s). Total atual: %.1f GB",
+                 removidos, total / 1024**3)
     except Exception as exc:
         log.warning("Falha na rotação de assets: %s", exc)
 
