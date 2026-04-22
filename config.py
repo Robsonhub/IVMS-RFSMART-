@@ -18,3 +18,6 @@ WEBHOOK_URL      = os.getenv("WEBHOOK_URL", "")
 FASE_PROCESSO    = os.getenv("FASE_PROCESSO", "manuseio")
 
 PASTA_CLIPS.mkdir(exist_ok=True)
+
+GITHUB_TOKEN     = os.getenv("GITHUB_TOKEN", "")
+GITHUB_REPO      = os.getenv("GITHUB_REPO", "Robsonhub/IVMS-RFSMART-")

@@ -1376,12 +1376,13 @@ def _menu_items(is_admin: bool) -> list:
     return [
         {"label": "Usuarios", "action": "usuarios", "cor": (185, 255, 195)},
         {"label": "Backup",   "action": "backup",   "cor": (255, 210, 160)},
-        {"label": "Atualizar", "action": "update",   "cor": (160, 210, 255)},
-        {"label": "Hardware", "action": "hardware", "cor": (210, 190, 255)},
+        {"label": "Atualizar", "action": "update",    "cor": (160, 210, 255)},
+        {"label": "Hardware",  "action": "hardware",  "cor": (210, 190, 255)},
+        {"label": "Relatório", "action": "relatorio", "cor": (255, 180, 180)},
         {"sep": True},
-        {"label": "Treinar",  "action": "treinar",  "cor": (195, 240, 255)},
+        {"label": "Treinar",   "action": "treinar",   "cor": (195, 240, 255)},
         {"sep": True},
-        {"label": "Sair",     "action": "sair",     "cor": (235, 225, 255), "danger": True},
+        {"label": "Sair",      "action": "sair",      "cor": (235, 225, 255), "danger": True},
     ]
 
 
@@ -1890,6 +1891,9 @@ def rodar_mosaico(cfg_principal, sessao: dict = None, intervalo_ia: int = 3):
         elif nome == "hardware":
             from hardware_panel import abrir_hardware_panel
             abrir_hardware_panel()
+        elif nome == "relatorio":
+            from error_reporter import abrir_painel_relatorio
+            abrir_painel_relatorio()
         elif isinstance(nome, tuple) and nome[0] == "zona":
             slot = slots.get(nome[1])
             if slot:
@@ -1939,7 +1943,7 @@ def rodar_mosaico(cfg_principal, sessao: dict = None, intervalo_ia: int = 3):
                 state["req_action"] = None
                 if acao == "sair":
                     break
-                elif acao in ("treinar", "usuarios", "backup", "update", "hardware"):
+                elif acao in ("treinar", "usuarios", "backup", "update", "hardware", "relatorio"):
                     _panel_pendente[0] = acao
 
             state["api_online"] = _api_online

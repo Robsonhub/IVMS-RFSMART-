@@ -1,6 +1,7 @@
 """CameraSlot — captura de frame RTSP por câmera com análise local de movimento."""
 import logging
 import os
+import re
 import threading
 import time
 
@@ -164,8 +165,10 @@ class CameraSlot:
             return list(self.deteccoes_locais)
 
     def _loop(self):
-        cam_id = self.cfg.get("id", str(self.idx))
-        atraso = 1.0
+        cam_id       = self.cfg.get("id", str(self.idx))
+        atraso       = 1.0
+        falhas_total = 0
+        _RELATORIO_FALHAS = 8   # envia relatório após N falhas consecutivas sem conectar
         while self._rodando:
             self._trocar.clear()
             uri = self._uri_ativo
@@ -185,10 +188,23 @@ class CameraSlot:
             with self._lock:
                 self._cap = new_cap
             if not new_cap.isOpened():
-                log.warning("[%s] Stream não abriu — tentando em %.0fs", cam_id, atraso)
+                falhas_total += 1
+                log.warning("[%s] Stream não abriu (tentativa %d) — tentando em %.0fs",
+                            cam_id, falhas_total, atraso)
+                if falhas_total == _RELATORIO_FALHAS:
+                    try:
+                        from error_reporter import relatar_automatico
+                        relatar_automatico(
+                            "falha_conexao_camera",
+                            {"camera_id": cam_id, "uri": re.sub(r":[^@]+@", ":***@", uri),
+                             "tentativas": falhas_total},
+                        )
+                    except Exception:
+                        pass
                 time.sleep(atraso)
                 atraso = min(atraso * 2, 30)
                 continue
+            falhas_total = 0
             log.info("[%s] Stream RTSP conectado (%s)", cam_id,
                      "PRINCIPAL" if uri == self._uri_main else "SUB")
             atraso = 1.0
