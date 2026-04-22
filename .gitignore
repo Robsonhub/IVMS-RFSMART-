@@ -38,6 +38,9 @@ sparta_pre_restore_*.db
 sparta_backup_*.db
 sparta_backup_*.zip
 
+# Lixeira — arquivos descartados, nunca subir ao repo
+lixeira/
+
 # Sistema
 Thumbs.db
 .DS_Store

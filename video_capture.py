@@ -9,6 +9,18 @@ import cv2
 log = logging.getLogger(__name__)
 
 
+def _mascarar_uri(uri: str) -> str:
+    """Substitui user:senha da URI RTSP por *** para logging seguro."""
+    try:
+        p = urlparse(uri)
+        if p.username:
+            host_porta = f"{p.hostname}:{p.port}" if p.port else p.hostname
+            return urlunparse(p._replace(netloc=f"***:***@{host_porta}"))
+    except Exception:
+        pass
+    return uri
+
+
 def _descobrir_rtsp(ip: str, porta: int, usuario: str, senha: str,
                     canal: int = 1) -> str:
     """Conecta via ONVIF e retorna a URI RTSP do canal indicado (1-based)."""
@@ -51,7 +63,7 @@ def listar_canais_onvif(ip: str, porta: int, usuario: str, senha: str) -> list:
 class VideoCapture:
     """Captura video a partir de uma URI RTSP em thread separada com buffer circular."""
 
-    def __init__(self, rtsp_uri: str, buffer_segundos: int = 60, fps_padrao: float = 15.0):
+    def __init__(self, rtsp_uri: str, buffer_segundos: int = 15, fps_padrao: float = 15.0):
         self._uri      = rtsp_uri
         self._fps_pad  = fps_padrao
         self.fps       = fps_padrao
@@ -96,7 +108,7 @@ class VideoCapture:
         if self._cap.isOpened():
             fps = self._cap.get(cv2.CAP_PROP_FPS)
             self.fps = fps if fps > 0 else self._fps_pad
-            log.info("Stream conectado. FPS: %.1f", self.fps)
+            log.info("Stream conectado: %s  FPS=%.1f", _mascarar_uri(self._uri), self.fps)
             return True
         return False
 
@@ -104,7 +116,7 @@ class VideoCapture:
         atraso = 1.0
         while self._rodando:
             if not self._conectar():
-                log.warning("Falha no stream RTSP. Tentando em %.0fs...", atraso)
+                log.warning("Falha no stream %s. Tentando em %.0fs...", _mascarar_uri(self._uri), atraso)
                 time.sleep(atraso)
                 atraso = min(atraso * 2, 30)
                 continue

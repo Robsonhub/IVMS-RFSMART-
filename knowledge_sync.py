@@ -301,19 +301,23 @@ def import_knowledge(zip_path: Path, db_path: Path) -> tuple[int, int]:
                 existentes += 1
                 continue
 
-            # Cria registro sintético em analises para satisfazer FK e NOT NULL
+            # Cria registro sintético em analises para satisfazer FK e NOT NULL.
+            # alerta reflete o nível real do exemplo — crítico/suspeito = alerta=1.
             ts_agora = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+            nivel_ex = ex.get("nivel_risco", "sem_risco")
+            alerta_ex = 1 if nivel_ex in ("suspeito", "critico") else 0
             cur = con.execute(
                 """INSERT INTO analises
                    (frame_id, camera_id, timestamp_analise, nivel_risco,
                     comportamentos, alerta, confianca, acao_recomendada)
-                   VALUES (?, ?, ?, ?, ?, 0, 0.9, ?)""",
+                   VALUES (?, ?, ?, ?, ?, ?, 0.9, ?)""",
                 (
                     f"KNOWLEDGE:{h}",
                     f"KNOWLEDGE:{ex.get('camera_origem', 'importado')}",
                     ex.get("created_at") or ts_agora,
-                    ex["nivel_risco"],
+                    nivel_ex,
                     ex["comportamentos"],
+                    alerta_ex,
                     ex.get("acao_recomendada", ""),
                 ),
             )

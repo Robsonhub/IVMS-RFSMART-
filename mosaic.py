@@ -25,7 +25,17 @@ try:
 except ImportError:
     _PIL_OK = False
 
-from local_analyzer import AnalisadorLocal
+from camera_slot import CameraSlot, _mesclar_bboxes
+from mosaic_constants import (
+    MOSAIC_W, MOSAIC_H, HDR_H, TOOLBAR_H, WIN_W, WIN_H, WIN_NAME,
+    CAP_W, CAP_H, LAYOUTS, LAYOUT_ORDER,
+    CTX_W, CTX_ITEM_H, CTX_SEP_H, CTX_PAD_V, CTX_PAD_H,
+    _TOOLBAR_BTN_W, _TOOLBAR_BTN_H, _TOOLBAR_BTN_GAP, _TOOLBAR_BTN_Y0,
+    _ACT_BTN_W, _ACT_BTN_GAP, _MENU_BTN_W, _MENU_DROP_W,
+    _MENU_DROP_ITH, _MENU_DROP_PAD_V, _MENU_DROP_PAD_H,
+    C_BG, C_CARD, C_AMARELO, C_OURO2, C_BRANCO, C_CINZA,
+    C_VERDE, C_VERM, C_LARAN, C_AZUL, NIVEL_COR, CAMERAS_JSON,
+)
 
 # ── Logo da empresa ────────────────────────────────────────────────────────────
 _LOGO_PATH  = next(
@@ -83,6 +93,28 @@ log = logging.getLogger(__name__)
 # Status global da API Claude (atualizado pelo worker de análise)
 _api_online: bool = True
 
+# Referência global aos slots ativos — preenchida por rodar_mosaico()
+_slots_ref: dict = {}
+
+
+def recalibrar_todos():
+    """Dispara recalibração de thresholds locais em todos os slots ativos."""
+    for slot in _slots_ref.values():
+        try:
+            slot.analisador_local.recalibrar()
+        except Exception:
+            pass
+    log.info("Recalibração de thresholds disparada para %d câmeras", len(_slots_ref))
+
+
+def ajuste_direto_todos(direcao: str):
+    """Aplica ajuste imediato de sensibilidade a todas as câmeras ativas."""
+    for slot in _slots_ref.values():
+        try:
+            slot.analisador_local.ajuste_direto(direcao)
+        except Exception:
+            pass
+
 
 def _vision_label() -> str:
     """Retorna label do motor de visão sem bloquear (lê singleton se já inicializado)."""
@@ -94,227 +126,6 @@ def _vision_label() -> str:
     except Exception:
         pass
     return "LOCAL"
-
-# ── Dimensoes fixas da area de video ─────────────────────────────────────────
-MOSAIC_W  = 1280
-MOSAIC_H  = 720
-HDR_H     = 60
-TOOLBAR_H = 32
-WIN_W     = MOSAIC_W
-WIN_H     = HDR_H + TOOLBAR_H + MOSAIC_H
-WIN_NAME  = "SPARTA AGENTE IA"
-
-# Resolucao interna de captura por slot (redimensiona na renderizacao)
-CAP_W = 640
-CAP_H = 360
-
-# Layouts disponiveis: canais → (colunas, linhas)
-LAYOUTS = {
-    1:  (1, 1),
-    4:  (2, 2),
-    16: (4, 4),
-    32: (8, 4),
-}
-LAYOUT_ORDER = [1, 4, 16, 32]
-
-# Menu de contexto (desenhado no OpenCV — sem tkinter)
-CTX_W      = 230
-CTX_ITEM_H = 27
-CTX_SEP_H  = 10
-CTX_PAD_V  = 6
-CTX_PAD_H  = 14
-
-# Botoes da toolbar (layout)
-_TOOLBAR_BTN_W   = 72
-_TOOLBAR_BTN_H   = 22
-_TOOLBAR_BTN_GAP = 8
-_TOOLBAR_BTN_Y0  = (TOOLBAR_H - _TOOLBAR_BTN_H) // 2
-
-# Botão ☰ Menu (substitui botões de ação individuais)
-_ACT_BTN_W    = 78   # mantido para compatibilidade
-_ACT_BTN_GAP  = 6
-_MENU_BTN_W   = 90   # largura do botão ☰ Menu na toolbar
-_MENU_DROP_W  = 160  # largura do painel dropdown
-_MENU_DROP_ITH  = 30   # altura de cada item do dropdown
-_MENU_DROP_PAD_V = 8   # padding vertical interno
-_MENU_DROP_PAD_H = 14  # padding horizontal do texto
-
-# Cores BGR — paleta RRF Smart Security (ouro/preto)
-C_BG      = ( 18,  10,   5)   # preto naval (#050A12)
-C_CARD    = ( 30,  19,   8)   # navy escuro (#08131E)
-C_AMARELO = (255, 212,   0)   # ciano elétrico (#00D4FF)
-C_OURO2   = (158, 122,   0)   # ciano profundo (#007A9E)
-C_BRANCO  = (248, 232, 200)   # branco azulado (#C8E8F8)
-C_CINZA   = (112,  96,  74)   # cinza-azul (#4A6070)
-C_VERDE   = (119, 204,   0)   # verde ciano (#00CC77)
-C_VERM    = ( 85,  34, 255)   # vermelho frio (#FF2255)
-C_LARAN   = (153,  68, 255)   # magenta-rosa (#FF4499)
-C_AZUL    = (238, 153,   0)   # azul info (#0099EE)
-
-NIVEL_COR = {
-    "sem_risco": C_VERDE,
-    "atencao":   C_AMARELO,
-    "suspeito":  C_LARAN,
-    "critico":   C_VERM,
-}
-
-CAMERAS_JSON = Path(__file__).parent / "cameras.json"
-
-
-# ── Slot de camera ────────────────────────────────────────────────────────────
-class CameraSlot:
-    def __init__(self, idx: int, cfg_cam: dict):
-        self.idx              = idx
-        self.cfg              = cfg_cam
-        self.frame            = None
-        self.resultado        = {}
-        self.em_analise       = False
-        self.deteccoes_locais: list = []
-        self.frames_recentes: list = []
-        self._BUFFER_MAX = 100
-        self.analisador_local = AnalisadorLocal(camera_id=cfg_cam.get("id", str(idx)))
-        self._lock            = threading.Lock()
-        self._cap             = None
-        self._rodando         = False
-        self._expandido       = False
-        self._trocar          = threading.Event()
-        self._bgsub           = cv2.createBackgroundSubtractorMOG2(
-                                    history=300, varThreshold=50, detectShadows=False)
-        self._thread          = threading.Thread(target=self._loop, daemon=True)
-
-    def iniciar(self, rtsp_uri: str, rtsp_sub: str = ""):
-        self._uri_main  = rtsp_uri
-        self._uri_sub   = rtsp_sub
-        # Começa com sub-stream no mosaico; se não tiver, usa o principal
-        self._uri_ativo = rtsp_sub if rtsp_sub else rtsp_uri
-        self._rodando   = True
-        self._thread.start()
-
-    def set_expandido(self, expandido: bool):
-        """Troca para stream principal ao expandir, sub-stream ao minimizar."""
-        if not self._rodando:
-            return
-        self._expandido = expandido
-        novo = self._uri_main if (expandido or not self._uri_sub) else self._uri_sub
-        if novo and novo != self._uri_ativo:
-            self._uri_ativo = novo
-            self._trocar.set()  # sinaliza loop — não toca no cap fora da thread
-
-    def parar(self):
-        self._rodando = False
-        # Aguarda thread de captura sair de cap.read() antes de liberar o
-        # objeto — release durante read causa crash GIL no libavcodec.
-        if self._thread.is_alive() and self._thread is not threading.current_thread():
-            self._thread.join(timeout=10)
-        with self._lock:
-            cap = self._cap
-            self._cap = None
-        if cap is not None:
-            try:
-                cap.release()
-            except Exception:
-                pass
-
-    def get_frame(self):
-        with self._lock:
-            return self.frame.copy() if self.frame is not None else None
-
-    def set_resultado(self, r: dict):
-        with self._lock:
-            self.resultado  = r
-            self.em_analise = False
-
-    def get_resultado(self):
-        with self._lock:
-            return dict(self.resultado)
-
-    def get_deteccoes_locais(self) -> list:
-        with self._lock:
-            return list(self.deteccoes_locais)
-
-    def _loop(self):
-        cam_id = self.cfg.get("id", str(self.idx))
-        atraso = 1.0
-        while self._rodando:
-            self._trocar.clear()
-            uri = self._uri_ativo
-            # Libera cap anterior sem segurar o lock por muito tempo
-            with self._lock:
-                old_cap = self._cap
-                self._cap = None
-            if old_cap:
-                try:
-                    old_cap.release()
-                except Exception:
-                    pass
-            # Cria novo cap FORA do lock — VideoCapture pode bloquear vários segundos
-            new_cap = cv2.VideoCapture(uri)
-            new_cap.set(cv2.CAP_PROP_OPEN_TIMEOUT_MSEC, 8000)
-            new_cap.set(cv2.CAP_PROP_READ_TIMEOUT_MSEC, 8000)
-            new_cap.set(cv2.CAP_PROP_BUFFERSIZE, 1)
-            with self._lock:
-                self._cap = new_cap
-            if not new_cap.isOpened():
-                log.warning("[%s] Stream não abriu — tentando em %.0fs", cam_id, atraso)
-                time.sleep(atraso)
-                atraso = min(atraso * 2, 30)
-                continue
-            log.info("[%s] Stream RTSP conectado (%s)", cam_id,
-                     "PRINCIPAL" if uri == self._uri_main else "SUB")
-            atraso = 1.0
-            falhas = 0
-            while self._rodando and not self._trocar.is_set():
-                with self._lock:
-                    cap = self._cap
-                if cap is None:
-                    break
-                try:
-                    ok, frame = cap.read()
-                except Exception:
-                    break
-                if not ok:
-                    falhas += 1
-                    if falhas >= 5:
-                        log.warning("[%s] Falha ao ler frames — reconectando", cam_id)
-                        break
-                    time.sleep(0.1)
-                    continue
-                falhas = 0
-                # Expandido → guarda em alta resolução; miniatura → CAP_W x CAP_H
-                if self._expandido:
-                    fh, fw = frame.shape[:2]
-                    escala = min(1280 / fw, 720 / fh, 1.0)
-                    tw = int(fw * escala)
-                    th = int(fh * escala)
-                    thumb = cv2.resize(frame, (tw, th), interpolation=cv2.INTER_LINEAR)
-                else:
-                    thumb = cv2.resize(frame, (CAP_W, CAP_H),
-                                       interpolation=cv2.INTER_LINEAR)
-                # Detecção local por subtração de fundo (sempre em CAP_W x CAP_H)
-                small = thumb if not self._expandido else cv2.resize(
-                    frame, (CAP_W, CAP_H), interpolation=cv2.INTER_LINEAR)
-                bboxes = []
-                try:
-                    mask = self._bgsub.apply(small)
-                    mask = cv2.morphologyEx(mask, cv2.MORPH_OPEN,
-                                            np.ones((5, 5), np.uint8))
-                    mask = cv2.dilate(mask, np.ones((7, 7), np.uint8), iterations=2)
-                    contornos, _ = cv2.findContours(
-                        mask, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
-                    for cnt in contornos:
-                        if cv2.contourArea(cnt) < 800:
-                            continue
-                        x, y, bw, bh = cv2.boundingRect(cnt)
-                        bboxes.append((x, y, x + bw, y + bh))
-                    bboxes = _mesclar_bboxes(bboxes, gap=20)
-                except Exception:
-                    pass
-                with self._lock:
-                    self.frame = thumb
-                    self.deteccoes_locais = bboxes
-                    self.frames_recentes.append(small.copy())
-                    if len(self.frames_recentes) > self._BUFFER_MAX:
-                        self.frames_recentes.pop(0)
 
 
 def _safe_text(s: str) -> str:
@@ -456,63 +267,117 @@ def _toolbar_action_rects(win_w: int, n: int = 0) -> list:
     return [(x0, _TOOLBAR_BTN_Y0, x1, _TOOLBAR_BTN_Y0 + _TOOLBAR_BTN_H)]
 
 
-def _mesclar_bboxes(boxes: list, gap: int = 20) -> list:
-    """Mescla bounding boxes sobrepostos ou próximos (gap px)."""
-    if not boxes:
-        return []
-    merged = True
-    result = list(boxes)
-    while merged:
-        merged = False
-        novo = []
-        usado = [False] * len(result)
-        for i, (ax1, ay1, ax2, ay2) in enumerate(result):
-            if usado[i]:
-                continue
-            mx1, my1, mx2, my2 = ax1, ay1, ax2, ay2
-            for j, (bx1, by1, bx2, by2) in enumerate(result):
-                if i == j or usado[j]:
-                    continue
-                if bx1 - gap <= mx2 and bx2 + gap >= mx1 and \
-                   by1 - gap <= my2 and by2 + gap >= my1:
-                    mx1 = min(mx1, bx1)
-                    my1 = min(my1, by1)
-                    mx2 = max(mx2, bx2)
-                    my2 = max(my2, by2)
-                    usado[j] = True
-                    merged = True
-            novo.append((mx1, my1, mx2, my2))
-            usado[i] = True
-        result = novo
-    return result
+# ── Palavras-chave para decisão inteligente de análise ────────────────────────
+# Indica corpo parcial entrando na zona → expandir para câmera toda
+_KW_CORPO_PARCIAL = {
+    "mão", "mãos", "braço", "antebraço", "perna", "pé", "pés", "dedo", "dedos",
+    "ombro", "cotovelo", "joelho", "tornozelo",
+    "hand", "hands", "arm", "forearm", "leg", "foot", "feet", "finger", "fingers",
+    "shoulder", "elbow", "knee", "ankle",
+}
+# Indica cena repetitiva/contínua sem risco real → suprimir chamadas
+_KW_CENA_REPETITIVA = {
+    "água", "water", "gotejamento", "dripping", "escorrendo", "flowing",
+    "continuo", "continua", "constante", "repetitivo", "repetitiva",
+    "vento", "wind", "sombra", "shadow", "reflexo", "reflection",
+}
+
+
+def _fingerprint_cena(resultado: dict) -> str:
+    """Identificador compacto da cena para detectar repetição."""
+    nivel = resultado.get("nivel_risco", "sem_risco")
+    comps = tuple(sorted(c[:50] for c in resultado.get("comportamentos_detectados", [])))
+    return f"{nivel}|{hash(comps)}"
+
+
+def _detectar_corpo_parcial(resultado: dict) -> bool:
+    texto = " ".join(
+        resultado.get("comportamentos_detectados", []) +
+        [resultado.get("posicao_na_cena", ""), resultado.get("acao_recomendada", "")]
+    ).lower()
+    return any(kw in texto for kw in _KW_CORPO_PARCIAL)
+
+
+def _detectar_cena_repetitiva(resultado: dict) -> bool:
+    texto = " ".join(
+        resultado.get("comportamentos_detectados", []) +
+        [resultado.get("posicao_na_cena", "")]
+    ).lower()
+    return any(kw in texto for kw in _KW_CENA_REPETITIVA)
 
 
 # ── Fila de analise IA ────────────────────────────────────────────────────────
 class FilaAnalise:
-    # Intervalo mínimo entre análises por câmera (segundos)
-    INTERVALO_PADRAO = 8
+    INTERVALO_PADRAO  = 8    # segundos — intervalo base entre análises
+    BACKOFF_MEDIO     = 60   # cena repetida 3-5x
+    BACKOFF_ALTO      = 300  # cena repetida 6+x (5 minutos)
+    REPS_MEDIO        = 3
+    REPS_ALTO         = 6
 
     def __init__(self, intervalo: int = INTERVALO_PADRAO):
-        self._q         = queue.Queue()
-        self._intervalo = intervalo
-        self._ultimo    = {}
-        self._thread    = threading.Thread(target=self._worker, daemon=True)
+        self._q              = queue.Queue()
+        self._intervalo      = intervalo
+        self._ultimo         = {}   # {slot.idx: monotonic}
+        self._cena_hash      = {}   # {slot.idx: str} — fingerprint da última análise
+        self._repeticoes     = {}   # {slot.idx: int} — quantas vezes a mesma cena repetiu
+        self._intervalo_slot = {}   # {slot.idx: int} — cooldown adaptativo atual
+        self._thread         = threading.Thread(target=self._worker, daemon=True)
         self._thread.start()
 
     def enfileirar(self, slot: CameraSlot, frame_id: str, frame):
-        # Gate 1: intervalo mínimo entre análises
+        # Gate 1: cooldown adaptativo por câmera
         agora = time.monotonic()
-        if agora - self._ultimo.get(slot.idx, 0) < self._intervalo:
+        cooldown = self._intervalo_slot.get(slot.idx, self._intervalo)
+        if agora - self._ultimo.get(slot.idx, 0) < cooldown:
             return
         # Gate 2: não enfileirar se já está analisando
         if slot.em_analise:
             return
-        # Gate 3: só enfileirar se há movimento detectado pelo OpenCV
-        if not slot.get_deteccoes_locais():
+        # Gate 3: qualquer movimento na zona (ou câmera toda se sem zona)
+        if not slot.get_movimento_na_zona():
             return
         slot.em_analise = True
         self._ultimo[slot.idx] = agora
         self._q.put((slot, frame_id, frame.copy()))
+
+    def _atualizar_backoff(self, slot: CameraSlot, resultado: dict, camera_id: str):
+        """Ajusta cooldown com base na repetição da cena."""
+        fp = _fingerprint_cena(resultado)
+        if fp == self._cena_hash.get(slot.idx):
+            self._repeticoes[slot.idx] = self._repeticoes.get(slot.idx, 0) + 1
+        else:
+            self._cena_hash[slot.idx]    = fp
+            self._repeticoes[slot.idx]   = 0
+            self._intervalo_slot[slot.idx] = self._intervalo  # cena nova → reset
+
+        reps = self._repeticoes[slot.idx]
+        if reps >= self.REPS_ALTO or _detectar_cena_repetitiva(resultado):
+            novo = self.BACKOFF_ALTO
+        elif reps >= self.REPS_MEDIO:
+            novo = self.BACKOFF_MEDIO
+        else:
+            novo = self._intervalo
+
+        atual = self._intervalo_slot.get(slot.idx, self._intervalo)
+        if novo != atual:
+            self._intervalo_slot[slot.idx] = novo
+            log.info("[%s] Backoff ajustado para %ds (cena repetida %dx)",
+                     camera_id, novo, reps)
+
+    def _atualizar_expansao(self, slot: CameraSlot, resultado: dict, camera_id: str):
+        """Ativa/desativa modo expansão com base no que a IA detectou."""
+        nivel = resultado.get("nivel_risco", "sem_risco")
+        corpo_parcial = _detectar_corpo_parcial(resultado)
+
+        if corpo_parcial and not slot.modo_expansao:
+            slot.modo_expansao = True
+            self._intervalo_slot[slot.idx] = self._intervalo  # análise frequente ao expandir
+            self._repeticoes[slot.idx]     = 0
+            log.info("[%s] Corpo parcial detectado — monitoramento expandido (câmera toda)",
+                     camera_id)
+        elif slot.modo_expansao and nivel == "sem_risco" and not corpo_parcial:
+            slot.modo_expansao = False
+            log.info("[%s] Cena limpa — voltando ao monitoramento por zona", camera_id)
 
     def _worker(self):
         global _api_online
@@ -524,35 +389,69 @@ class FilaAnalise:
             try:
                 from analyzer import triagem_haiku, analisar_frame
 
-                # Estágio 1 — triagem Haiku: há pessoa no frame?
-                pessoa_detectada, conf_haiku = triagem_haiku(frame, frame_id, camera_id)
-                if not pessoa_detectada:
-                    resultado = {
-                        "alerta": False,
-                        "nivel_risco": "sem_risco",
-                        "comportamentos_detectados": ["Sem pessoa detectada na triagem"],
-                        "posicao_na_cena": "",
-                        "acao_recomendada": "",
-                        "revisar_clip": False,
-                        "janela_revisao_segundos": 0,
-                        "confianca": conf_haiku,
-                        "timestamp_analise": "",
-                        "frame_id": frame_id,
-                        "objetos_detectados": [],
-                        "fonte": "haiku-triagem",
-                    }
-                    nivel = "sem_risco"
-                    log.info("[%s] Haiku: sem pessoa — análise Opus ignorada", camera_id)
-                else:
-                    # Estágio 2 — análise completa com Opus
+                zonas = slot.zonas_roi
+                em_expansao = slot.modo_expansao
+
+                if zonas and not em_expansao:
+                    # Zonas configuradas e sem expansão: recorta para a união das zonas.
+                    fh, fw = frame.shape[:2]
+                    all_coords = [z["zona"] for z in zonas if z.get("zona")]
+                    if all_coords:
+                        ux1 = min(c[0] for c in all_coords)
+                        uy1 = min(c[1] for c in all_coords)
+                        ux2 = max(c[2] for c in all_coords)
+                        uy2 = max(c[3] for c in all_coords)
+                        rx1, ry1 = int(ux1 * fw), int(uy1 * fh)
+                        rx2, ry2 = int(ux2 * fw), int(uy2 * fh)
+                        frame_analise = frame[ry1:ry2, rx1:rx2] if (rx2 > rx1 and ry2 > ry1) else frame
+                        pct = (ux2 - ux1) * (uy2 - uy1) * 100
+                        log.info("[%s] %d zona(s) ROI — %.0f%% do frame",
+                                 camera_id, len(zonas), pct)
+                    else:
+                        frame_analise = frame
                     resultado, tokens_in, tokens_out = analisar_frame(
-                        frame, frame_id, camera_id=camera_id
+                        frame_analise, frame_id, camera_id=camera_id
                     )
-                    nivel = resultado.get("nivel_risco", "sem_risco")
+                else:
+                    # Sem zona OU modo expansão: analisa câmera toda.
+                    if em_expansao:
+                        log.info("[%s] Modo expansão — câmera completa", camera_id)
+                    if zonas:
+                        # Expansão com zona: pula triagem Haiku, analisa tudo com Opus
+                        resultado, tokens_in, tokens_out = analisar_frame(
+                            frame, frame_id, camera_id=camera_id
+                        )
+                    else:
+                        # Sem zona: triagem Haiku antes do Opus
+                        pessoa_detectada, conf_haiku = triagem_haiku(frame, frame_id, camera_id)
+                        if not pessoa_detectada:
+                            resultado = {
+                                "alerta": False,
+                                "nivel_risco": "sem_risco",
+                                "comportamentos_detectados": ["Sem pessoa detectada na triagem"],
+                                "posicao_na_cena": "",
+                                "acao_recomendada": "",
+                                "revisar_clip": False,
+                                "janela_revisao_segundos": 0,
+                                "confianca": conf_haiku,
+                                "timestamp_analise": "",
+                                "frame_id": frame_id,
+                                "objetos_detectados": [],
+                                "fonte": "haiku-triagem",
+                            }
+                            log.info("[%s] Haiku: sem pessoa — Opus ignorado", camera_id)
+                        else:
+                            resultado, tokens_in, tokens_out = analisar_frame(
+                                frame, frame_id, camera_id=camera_id
+                            )
+
+                nivel = resultado.get("nivel_risco", "sem_risco")
+                if tokens_in or tokens_out:
                     log.info("[%s] Claude %s (%.0f%%) | tokens: %d/%d",
                              camera_id, nivel.upper(),
                              resultado.get("confianca", 0) * 100,
                              tokens_in, tokens_out)
+
             except Exception as exc:
                 log.warning("[%s] Claude indisponivel (%s) — usando analise local",
                             camera_id, exc)
@@ -564,6 +463,9 @@ class FilaAnalise:
                          resultado.get("confianca", 0) * 100)
             else:
                 _api_online = True
+                # Inteligência pós-análise: backoff e expansão
+                self._atualizar_backoff(slot, resultado, camera_id)
+                self._atualizar_expansao(slot, resultado, camera_id)
 
             try:
                 slot.set_resultado(resultado)
@@ -793,9 +695,52 @@ def _desenhar_ia_overlay(img: np.ndarray, res: dict, em_analise: bool,
     cv2.rectangle(img, (bar_w, h - 3), (w, h), (30, 30, 30), -1)
 
 
+def _desenhar_zonas(img: np.ndarray, slot, w: int, h: int, escala: float):
+    """Renderiza overlay de zonas de detecção sobre img (in-place)."""
+    _CZ = [
+        (255,212,0),(119,204,0),(153,68,255),(0,165,255),
+        (238,153,0),(0,255,128),(128,0,255),(255,0,128),
+    ]
+    zonas_slot = getattr(slot, "zonas_roi", [])
+    for zi, zd in enumerate(zonas_slot):
+        cor_z  = _CZ[zd.get("cor_idx", zi) % len(_CZ)]
+        nome_z = zd.get("nome", f"Zona {zi+1}")
+
+        if zd.get("tipo") == "poly":
+            pts_n = zd.get("pontos", [])
+            if len(pts_n) >= 3:
+                pts = np.array([[int(p[0]*w), int(p[1]*h)]
+                                for p in pts_n], np.int32)
+                cv2.polylines(img, [pts], True, cor_z, 2)
+                for pt in pts:
+                    cv2.circle(img, tuple(pt), max(3, int(escala*8)), cor_z, -1)
+                cx = int(np.mean([p[0] for p in pts_n]) * w)
+                cy = int(np.mean([p[1] for p in pts_n]) * h)
+                cv2.putText(img, nome_z, (max(2, cx-18), cy),
+                            cv2.FONT_HERSHEY_SIMPLEX, escala*0.55, cor_z, 2)
+        else:
+            coord = zd.get("zona", [])
+            if len(coord) != 4:
+                continue
+            zx1 = int(coord[0]*w); zy1 = int(coord[1]*h)
+            zx2 = int(coord[2]*w); zy2 = int(coord[3]*h)
+            cv2.rectangle(img, (zx1,zy1), (zx2,zy2), cor_z, 1)
+            arm_z = max(4, min(10, min(zx2-zx1, zy2-zy1)//6))
+            for (px, py, dx, dy) in [
+                (zx1,zy1, 1, 1),(zx2,zy1,-1, 1),
+                (zx1,zy2, 1,-1),(zx2,zy2,-1,-1),
+            ]:
+                cv2.line(img,(px,py),(px+dx*arm_z,py),cor_z,2)
+                cv2.line(img,(px,py),(px,py+dy*arm_z),cor_z,2)
+            if (zx2-zx1)>30 and (zy2-zy1)>12:
+                cv2.putText(img, nome_z, (zx1+3, zy1+11),
+                            cv2.FONT_HERSHEY_SIMPLEX, escala*0.50, cor_z, 1)
+
+
 def _slot_camera(slot: CameraSlot, w: int, h: int,
                  closeable: bool = False, show_close: bool = False,
                  show_bar: bool = False) -> np.ndarray:
+    escala = max(0.28, min(0.50, w / 640))
     frame = slot.get_frame()
     if frame is None:
         img = np.full((h, w, 3), C_CARD, dtype=np.uint8)
@@ -805,6 +750,7 @@ def _slot_camera(slot: CameraSlot, w: int, h: int,
                 cv2.circle(img, (gx, gy), 1, (35, 30, 40), -1)
         cv2.putText(img, "[ CONECTANDO... ]", (max(4, w // 5), h // 2),
                     cv2.FONT_HERSHEY_SIMPLEX, max(0.3, w / 900), C_CINZA, 1)
+        _desenhar_zonas(img, slot, w, h, escala)
         return img
 
     img = cv2.resize(frame, (w, h), interpolation=cv2.INTER_LINEAR)
@@ -816,7 +762,6 @@ def _slot_camera(slot: CameraSlot, w: int, h: int,
     confianca  = float(res.get("confianca", 0.0)) if res else 0.0
 
     bar_h  = max(16, h // 14)
-    escala = max(0.28, min(0.50, w / 640))
 
     # ── Scan line animada durante análise IA ──────────────────────────────────
     if em_analise and h > 60:
@@ -854,6 +799,9 @@ def _slot_camera(slot: CameraSlot, w: int, h: int,
     # baixo-direita
     cv2.line(img, (w - 1, h - 1 - arm), (w - 1, h - 1), bcor, bth)
     cv2.line(img, (w - 1 - arm, h - 1), (w - 1, h - 1), bcor, bth)
+
+    # ── Overlay das zonas de detecção ────────────────────────────────────────────
+    _desenhar_zonas(img, slot, w, h, escala)
 
     # ── Barra superior semitransparente (só no hover ou expandido) ───────────
     cam_id = slot.cfg.get("id", f"CAM{slot.idx + 1}")
@@ -1373,10 +1321,11 @@ def _ctx_itens(slot_idx: int, slots: dict) -> list:
             {"label": "Abrir em tela cheia", "action": "expandir"},
             {"label": "Reiniciar conexao",   "action": "reiniciar"},
             {"sep": True},
-            {"label": "Renomear camera",     "action": "renomear"},
-            {"label": "Configurar camera",   "action": "configurar"},
+            {"label": "Renomear camera",        "action": "renomear"},
+            {"label": "Configurar camera",      "action": "configurar"},
+            {"label": "Definir zona de deteccao", "action": "zona"},
             {"sep": True},
-            {"label": "Fechar camera",       "action": "fechar",     "danger": True},
+            {"label": "Fechar camera",          "action": "fechar",   "danger": True},
         ]
     return [{"label": "Adicionar camera", "action": "adicionar"}]
 
@@ -1547,7 +1496,9 @@ def rodar_mosaico(cfg_principal, sessao: dict = None, intervalo_ia: int = 3):
     _usuario_nome = sessao["nome"] if sessao else "—"
     _usuario_grupo = sessao["grupo"] if sessao else "usuario"
 
+    global _slots_ref
     slots: dict[int, CameraSlot] = {}
+    _slots_ref = slots          # expõe para recalibrar_todos() / ajuste_direto_todos()
     fila  = FilaAnalise(intervalo=intervalo_ia)
 
     # Estado compartilhado entre main loop e callback de mouse
@@ -1710,6 +1661,10 @@ def rodar_mosaico(cfg_principal, sessao: dict = None, intervalo_ia: int = 3):
                     slots[slot_idx] = novo
                     _salvar_todos()
                     log.info("Camera reconfigurada: slot %d", slot_idx)
+
+        elif action == "zona":
+            if slot_idx in slots:
+                _panel_pendente[0] = ("zona", slot_idx)
 
         elif action == "fechar":
             if state["expandido"] == slot_idx:
@@ -1935,6 +1890,26 @@ def rodar_mosaico(cfg_principal, sessao: dict = None, intervalo_ia: int = 3):
         elif nome == "hardware":
             from hardware_panel import abrir_hardware_panel
             abrir_hardware_panel()
+        elif isinstance(nome, tuple) and nome[0] == "zona":
+            slot = slots.get(nome[1])
+            if slot:
+                import tkinter as _tk
+                r = _tk.Tk(); r.withdraw(); r.attributes("-topmost", True)
+
+                def _ao_salvar_zonas(zonas, _slot=slot):
+                    _slot.set_zonas(zonas)
+                    _slot.cfg["zonas_deteccao"] = zonas
+                    _slot.cfg.pop("zona_deteccao", None)  # remove formato antigo
+                    _salvar_todos()
+                    for z in zonas:
+                        log.info("[%s] zona salva: nome=%s tipo=%s pontos=%s",
+                                 _slot.cfg["id"], z.get("nome"), z.get("tipo"),
+                                 len(z.get("pontos", [])) if z.get("tipo") == "poly" else "n/a")
+
+                from zona_editor import ZonaEditorDialog
+                ZonaEditorDialog(r, slot, on_salvar=_ao_salvar_zonas)
+                r.mainloop()
+                r.destroy()
         gc.collect()
         # Restaura callback do mouse (Tkinter pode ter alterado foco)
         try:

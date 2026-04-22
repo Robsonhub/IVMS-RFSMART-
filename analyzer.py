@@ -5,13 +5,19 @@ from datetime import datetime, timezone
 
 import anthropic
 import cv2
+import httpx
 
 from config import CLAUDE_API_KEY, CAMERA_ID, FASE_PROCESSO
 from prompts import SYSTEM_PROMPT, USER_PROMPT_TEMPLATE
 
 log = logging.getLogger(__name__)
 
-_client = anthropic.Anthropic(api_key=CLAUDE_API_KEY)
+_client = anthropic.Anthropic(
+    api_key=CLAUDE_API_KEY,
+    http_client=httpx.Client(
+        timeout=httpx.Timeout(60.0, connect=10.0),
+    ),
+)
 
 _ANALISE_W = 640
 _ANALISE_H = 360
@@ -78,21 +84,24 @@ def _system_com_fewshot() -> str:
 
 def _validar_resultado(resultado: dict, frame_id: str) -> dict:
     """Valida e normaliza campos do JSON retornado pela IA."""
+    _DEFAULTS = {bool: False, float: 0.0, str: "", list: []}
+    campos_ausentes = []
+
     for campo, tipo in _CAMPOS_OBRIGATORIOS.items():
         if campo not in resultado:
-            log.warning("Campo ausente na resposta IA: %s — usando padrão seguro", campo)
-            if tipo == bool:
-                resultado[campo] = False
-            elif tipo == float:
-                resultado[campo] = 0.0
-            elif tipo == str:
-                resultado[campo] = ""
-            elif tipo == list:
-                resultado[campo] = []
+            campos_ausentes.append(campo)
+            resultado[campo] = _DEFAULTS[tipo]
+
+    if campos_ausentes:
+        log.error(
+            "[%s] Resposta IA incompleta — campos ausentes: %s. "
+            "Análise registrada com valores padrão (pode ser falso negativo).",
+            frame_id, campos_ausentes
+        )
 
     nivel = resultado.get("nivel_risco", "sem_risco")
     if nivel not in _NIVEIS_VALIDOS:
-        log.warning("nivel_risco inválido '%s' — corrigindo para 'sem_risco'", nivel)
+        log.error("[%s] nivel_risco inválido '%s' — forçando 'sem_risco'", frame_id, nivel)
         resultado["nivel_risco"] = "sem_risco"
 
     conf = resultado.get("confianca", 0.0)

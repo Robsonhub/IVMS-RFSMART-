@@ -15,6 +15,7 @@ def _loop(hb_path: Path, intervalo: int):
     while not _stop.wait(intervalo):
         try:
             hb_path.write_text(str(time.time()), encoding="utf-8")
+            log.debug("Heartbeat escrito: %s", hb_path)
         except Exception:
             pass
 

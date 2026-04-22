@@ -97,6 +97,31 @@ class AnalisadorLocal:
         """Chamada externamente após novos feedbacks do admin."""
         threading.Thread(target=self._calibrar, daemon=True).start()
 
+    def ajuste_direto(self, direcao: str):
+        """
+        Aplica ajuste imediato de sensibilidade baseado no veredito do operador,
+        sem esperar os 30 feedbacks mínimos do calibrador estatístico.
+
+        direcao: "menos_sensivel" | "mais_sensivel" | "manter"
+
+        Menos sensível → thresholds maiores → precisa de mais movimento para alertar.
+        Mais sensível  → thresholds menores → alerta com menos movimento.
+        """
+        if direcao == "manter":
+            return
+        from calibrator import _LIMITES
+        fator = 1.15 if direcao == "menos_sensivel" else 0.88
+        with self._lock:
+            for key in ("motion_atencao", "motion_suspeito", "motion_critico",
+                        "tapete_motion_suspeito", "optical_flow_rapido"):
+                if key in self.thresholds and key in _LIMITES:
+                    lo, hi = _LIMITES[key]
+                    self.thresholds[key] = round(
+                        max(lo, min(hi, self.thresholds[key] * fator)), 4
+                    )
+        log.info("[%s] Ajuste direto de sensibilidade: %s (fator=%.2f)",
+                 self.camera_id, direcao, fator)
+
     # ── Análise principal ─────────────────────────────────────────────────────
 
     def analisar(self, frame, frame_id: str = "") -> dict:

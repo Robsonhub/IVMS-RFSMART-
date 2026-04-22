@@ -23,6 +23,37 @@ _DDL = """
 PRAGMA journal_mode=WAL;
 PRAGMA foreign_keys=ON;
 
+CREATE TABLE IF NOT EXISTS schema_versao (
+    id          INTEGER PRIMARY KEY CHECK (id = 1),
+    versao      INTEGER NOT NULL DEFAULT 1,
+    atualizado  TEXT    DEFAULT (datetime('now'))
+);
+INSERT OR IGNORE INTO schema_versao (id, versao) VALUES (1, 1);
+
+CREATE TABLE IF NOT EXISTS usuarios (
+    id              INTEGER PRIMARY KEY AUTOINCREMENT,
+    nome            TEXT    NOT NULL UNIQUE,
+    senha_hash      TEXT    NOT NULL,
+    grupo           TEXT    NOT NULL DEFAULT 'usuario',
+    ativo           INTEGER NOT NULL DEFAULT 1,
+    trocar_senha    INTEGER NOT NULL DEFAULT 0,
+    email           TEXT,
+    telefone        TEXT,
+    created_at      TEXT    DEFAULT (datetime('now'))
+);
+
+CREATE TABLE IF NOT EXISTS login_audit (
+    id          INTEGER PRIMARY KEY AUTOINCREMENT,
+    usuario_id  INTEGER,
+    nome        TEXT NOT NULL,
+    sucesso     INTEGER NOT NULL,
+    ip          TEXT,
+    created_at  TEXT DEFAULT (datetime('now'))
+);
+
+CREATE INDEX IF NOT EXISTS idx_audit_usuario ON login_audit(usuario_id);
+CREATE INDEX IF NOT EXISTS idx_audit_data    ON login_audit(created_at);
+
 CREATE TABLE IF NOT EXISTS analises (
     id                      INTEGER PRIMARY KEY AUTOINCREMENT,
     frame_id                TEXT NOT NULL,
@@ -441,6 +472,38 @@ def estatisticas() -> dict:
         "perguntas_pendentes":  pendentes,
         "exemplos_fewshot":     exemplos,
     }
+
+
+def get_schema_versao() -> int:
+    conn = get_connection()
+    row = conn.execute("SELECT versao FROM schema_versao WHERE id=1").fetchone()
+    return int(row["versao"]) if row else 1
+
+
+def set_schema_versao(versao: int):
+    with _lock:
+        conn = get_connection()
+        conn.execute(
+            "UPDATE schema_versao SET versao=?, atualizado=datetime('now') WHERE id=1",
+            (versao,)
+        )
+        conn.commit()
+    log.info("Schema do banco atualizado para versão %d", versao)
+
+
+def _migrar_colunas_usuarios():
+    """Adiciona colunas ausentes na tabela usuarios (bancos legados)."""
+    conn = get_connection()
+    for col_def in [
+        ("email",       "TEXT"),
+        ("telefone",    "TEXT"),
+        ("trocar_senha","INTEGER NOT NULL DEFAULT 0"),
+    ]:
+        try:
+            conn.execute(f"ALTER TABLE usuarios ADD COLUMN {col_def[0]} {col_def[1]}")
+            conn.commit()
+        except Exception:
+            pass
 
 
 if __name__ == "__main__":

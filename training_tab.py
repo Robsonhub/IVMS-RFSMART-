@@ -3,12 +3,42 @@ Aba de Treinamento de IA — SPARTA AGENTE IA
 Tema: amarelo/preto (#FFD000 / #0F0F0F), consistente com o restante do sistema.
 """
 import json
+import re
 import threading
 import tkinter as tk
 from pathlib import Path
 from tkinter import ttk
 
 import db
+
+# ── Prompt de extração de aprendizado ─────────────────────────────────────────
+_PROMPT_EXTRACAO = (
+    "Você é um extrator de dados de calibração para um sistema de vigilância "
+    "de garimpo de ouro.\n\n"
+    "Com base na conversa abaixo entre o sistema de IA e o operador sobre uma "
+    "detecção de câmera, extraia as informações de calibração.\n\n"
+    "Detecção original:\n"
+    "- Câmera: {camera_id}\n"
+    "- Nível detectado: {nivel_risco}\n"
+    "- Comportamentos detectados pela IA: {comportamentos}\n"
+    "- Ação recomendada: {acao}\n"
+    "- Confiança: {confianca}%\n\n"
+    "Conversa:\n{conversa}\n\n"
+    "Retorne SOMENTE JSON válido, sem texto fora dele:\n"
+    '{{\n'
+    '  "rotulo": "correto" ou "falso_positivo",\n'
+    '  "descricao_real": "o que realmente acontecia (max 180 chars)",\n'
+    '  "ajuste_sugerido": "menos_sensivel" ou "mais_sensivel" ou "manter",\n'
+    '  "justificativa": "motivo do ajuste de sensibilidade (max 100 chars)",\n'
+    '  "observacao": "frase concisa para calibrar exemplos futuros (max 160 chars)"\n'
+    '}}\n\n'
+    "Regras:\n"
+    '- rotulo="correto" se o operador CONFIRMOU suspeita ou furto real\n'
+    '- rotulo="falso_positivo" se era comportamento NORMAL de trabalho\n'
+    '- ajuste_sugerido="menos_sensivel" se a IA alertou desnecessariamente\n'
+    '- ajuste_sugerido="mais_sensivel" se a IA deveria ter alertado mais cedo\n'
+    '- ajuste_sugerido="manter" se a sensibilidade parece adequada'
+)
 
 # ── Paleta ─────────────────────────────────────────────────────────────────────
 BG          = "#050A12"
@@ -55,31 +85,41 @@ def _btn(pai, texto, cmd, bg=AMARELO, fg=BG):
 # ── Diálogo de Chat com IA ─────────────────────────────────────────────────────
 
 class ChatDialog:
-    """Janela de conversa livre com a IA sobre uma análise específica."""
+    """
+    Conversa com a IA sobre uma análise específica.
+    O operador explica o que realmente acontecia na cena.
+    Ao clicar em "Aprender", Claude extrai aprendizado estruturado da conversa
+    e o sistema ajusta calibração imediatamente — sem que o operador precise
+    saber nada sobre parâmetros técnicos.
+    """
 
     _SYSTEM = (
         "Você é o assistente de calibração do SPARTA AGENTE IA, sistema de vigilância "
-        "para garimpo de ouro. Sua função é ajudar o operador a explicar o que "
-        "realmente aconteceu em uma cena detectada pela câmera, para que o sistema "
-        "aprenda corretamente. Faça perguntas claras e objetivas quando precisar de "
-        "mais detalhes. Responda sempre em português brasileiro. Seja conciso."
+        "para garimpo de ouro. Ajude o operador a explicar o que realmente aconteceu "
+        "na cena detectada. Faça perguntas curtas e objetivas. "
+        "Responda em português brasileiro. Seja conciso."
     )
 
-    def __init__(self, parent: tk.Misc, analise: dict, on_salvar_obs=None):
-        self._on_salvar_obs = on_salvar_obs
+    def __init__(self, parent: tk.Misc, analise: dict,
+                 on_aprendizado=None, on_salvar_obs=None):
+        self._on_aprendizado = on_aprendizado
+        self._on_salvar_obs  = on_salvar_obs   # mantido para compat.
         self._historico: list[dict] = []
         self._analise = analise
+        self._dados_extraidos: dict | None = None
 
         self._win = tk.Toplevel(parent)
         self._win.title("Conversar com IA — Explicar Ocorrência")
         self._win.configure(bg=BG)
-        self._win.geometry("680x540")
+        self._win.geometry("700x580")
         self._win.resizable(True, True)
         self._win.grab_set()
         self._win.attributes("-topmost", True)
 
         self._montar_ui()
         self._mensagem_inicial()
+
+    # ── UI ────────────────────────────────────────────────────────────────────
 
     def _montar_ui(self):
         a = self._analise
@@ -94,7 +134,7 @@ class ChatDialog:
         # Cabeçalho
         cab = tk.Frame(self._win, bg=AMARELO, padx=16, pady=8)
         cab.pack(fill="x")
-        tk.Label(cab, text="Conversar com IA sobre esta análise",
+        tk.Label(cab, text="Conversar com IA — Ensinar o Sistema",
                  font=("Segoe UI", 10, "bold"), bg=AMARELO, fg=BG).pack(side="left")
 
         # Contexto
@@ -104,7 +144,7 @@ class ChatDialog:
         if comps:
             desc = " | ".join(comps[:2]) + ("..." if len(comps) > 2 else "")
             tk.Label(ctx, text=f"Detectado: {desc}", font=FONT_SMALL,
-                     bg=BG_CARD, fg=BRANCO, wraplength=640, justify="left").pack(anchor="w")
+                     bg=BG_CARD, fg=BRANCO, wraplength=660, justify="left").pack(anchor="w")
 
         # Histórico do chat
         frm_hist = tk.Frame(self._win, bg=BG)
@@ -122,9 +162,10 @@ class ChatDialog:
         sb_hist.pack(side="right", fill="y")
         self._txt_hist.pack(fill="both", expand=True)
 
-        self._txt_hist.tag_configure("ia",  foreground=AMARELO, font=("Segoe UI", 9, "bold"))
-        self._txt_hist.tag_configure("vc",  foreground=VERDE,   font=("Segoe UI", 9, "bold"))
-        self._txt_hist.tag_configure("msg", foreground=BRANCO,  font=("Segoe UI", 9))
+        self._txt_hist.tag_configure("ia",     foreground=AMARELO, font=("Segoe UI", 9, "bold"))
+        self._txt_hist.tag_configure("vc",     foreground=VERDE,   font=("Segoe UI", 9, "bold"))
+        self._txt_hist.tag_configure("msg",    foreground=BRANCO,  font=("Segoe UI", 9))
+        self._txt_hist.tag_configure("status", foreground=CINZA,   font=("Segoe UI", 8, "italic"))
 
         # Área de digitação
         frm_input = tk.Frame(self._win, bg=BG_CARD, padx=10, pady=8)
@@ -140,7 +181,7 @@ class ChatDialog:
         self._txt_input.bind("<Return>", self._on_enter)
         self._txt_input.bind("<Shift-Return>", lambda e: None)
 
-        # Botões
+        # Barra de botões
         frm_btns = tk.Frame(self._win, bg=BG, padx=10, pady=8)
         frm_btns.pack(fill="x")
 
@@ -149,13 +190,20 @@ class ChatDialog:
         tk.Label(frm_btns, text="Enter envia  |  Shift+Enter nova linha",
                  font=FONT_SMALL, bg=BG, fg=CINZA).pack(side="left", padx=10)
 
-        self._btn_salvar = _btn(frm_btns, "  Salvar como Observação  ",
-                                self._salvar_obs, bg=VERDE, fg=BG)
-        self._btn_salvar.pack(side="right", padx=(0, 4))
-        self._btn_salvar.pack_forget()
+        self._sv_status = tk.StringVar(value="")
+        tk.Label(frm_btns, textvariable=self._sv_status,
+                 font=FONT_SMALL, bg=BG, fg=CINZA).pack(side="left", padx=4)
+
+        # Botão "Aprender" — aparece após 1ª resposta da IA
+        self._btn_aprender = _btn(frm_btns, "  Aprender com esta Conversa ▶  ",
+                                  self._aprender, bg=VERDE, fg=BG)
+        self._btn_aprender.pack(side="right", padx=(0, 4))
+        self._btn_aprender.pack_forget()
 
         _btn(frm_btns, "  Fechar  ", self._win.destroy,
              bg=CINZA_ESC, fg=BRANCO).pack(side="right", padx=(0, 6))
+
+    # ── Chat ──────────────────────────────────────────────────────────────────
 
     def _mensagem_inicial(self):
         a = self._analise
@@ -163,18 +211,18 @@ class ChatDialog:
         nivel = a.get("nivel_risco", "atencao").upper()
 
         msg_ia = (
-            f"Analisei esta cena e classifiquei como **{nivel}** "
+            f"Analisei esta cena e classifiquei como {nivel} "
             f"com {a.get('confianca',0)*100:.0f}% de confiança.\n\n"
-            f"Comportamentos detectados:\n" +
+            "Comportamentos que identifiquei:\n" +
             "\n".join(f"• {c}" for c in comps) +
             "\n\nO que realmente estava acontecendo neste momento? "
-            "Pode descrever com suas próprias palavras."
+            "Descreva com suas próprias palavras — qualquer detalhe ajuda o sistema a aprender."
         )
         self._adicionar_mensagem("IA", msg_ia)
         self._historico.append({"role": "assistant", "content": msg_ia})
 
     def _on_enter(self, event):
-        if not (event.state & 0x1):  # Shift não pressionado
+        if not (event.state & 0x1):
             self._enviar()
             return "break"
 
@@ -185,6 +233,7 @@ class ChatDialog:
         self._txt_input.delete("1.0", "end")
         self._adicionar_mensagem("Você", texto)
         self._historico.append({"role": "user", "content": texto})
+        self._sv_status.set("Aguardando IA...")
         threading.Thread(target=self._chamar_ia, daemon=True).start()
 
     def _chamar_ia(self):
@@ -196,13 +245,12 @@ class ChatDialog:
             a = self._analise
             comps = json.loads(a["comportamentos"]) if a.get("comportamentos") else []
             contexto = (
-                f"Análise: câmera={a.get('camera_id')}, "
-                f"nível={a.get('nivel_risco')}, "
+                f"Câmera={a.get('camera_id')}, nível={a.get('nivel_risco')}, "
                 f"confiança={a.get('confianca',0)*100:.0f}%, "
-                f"comportamentos detectados: {'; '.join(comps)}, "
-                f"ação recomendada: {a.get('acao_recomendada','N/A')}"
+                f"comportamentos: {'; '.join(comps)}, "
+                f"ação: {a.get('acao_recomendada','N/A')}"
             )
-            system = f"{self._SYSTEM}\n\nContexto da análise em debate:\n{contexto}"
+            system = f"{self._SYSTEM}\n\nContexto da análise:\n{contexto}"
 
             resp = client.messages.create(
                 model="claude-haiku-4-5-20251001",
@@ -213,10 +261,12 @@ class ChatDialog:
             resposta = resp.content[0].text
             self._historico.append({"role": "assistant", "content": resposta})
             self._win.after(0, lambda: self._adicionar_mensagem("IA", resposta))
-            self._win.after(0, lambda: self._btn_salvar.pack(side="right", padx=(0, 4)))
+            self._win.after(0, lambda: self._sv_status.set(""))
+            self._win.after(0, lambda: self._btn_aprender.pack(side="right", padx=(0, 4)))
         except Exception as exc:
             self._win.after(0, lambda: self._adicionar_mensagem(
-                "IA", f"Erro ao conectar com a IA: {exc}"))
+                "IA", f"[Erro ao conectar: {exc}]"))
+            self._win.after(0, lambda: self._sv_status.set(""))
 
     def _adicionar_mensagem(self, remetente: str, texto: str):
         self._txt_hist.configure(state="normal")
@@ -226,15 +276,146 @@ class ChatDialog:
         self._txt_hist.configure(state="disabled")
         self._txt_hist.see("end")
 
-    def _salvar_obs(self):
-        # Monta resumo da conversa para a observação
-        linhas = []
-        for m in self._historico:
-            role = "IA" if m["role"] == "assistant" else "Operador"
-            linhas.append(f"[{role}] {m['content']}")
-        resumo = "\n".join(linhas)
-        if self._on_salvar_obs:
-            self._on_salvar_obs(resumo)
+    # ── Extração de aprendizado ───────────────────────────────────────────────
+
+    def _aprender(self):
+        """Inicia extração estruturada do aprendizado via Claude Haiku."""
+        n_trocas = sum(1 for m in self._historico if m["role"] == "user")
+        if n_trocas == 0:
+            self._sv_status.set("Explique a situação para a IA antes de aprender.")
+            return
+        self._btn_aprender.config(text="  Extraindo aprendizado...  ")
+        self._sv_status.set("")
+        threading.Thread(target=self._extrair_e_mostrar, daemon=True).start()
+
+    def _extrair_e_mostrar(self):
+        try:
+            dados = self._extrair_aprendizado()
+            self._win.after(0, lambda: self._mostrar_confirmacao(dados))
+        except Exception as exc:
+            self._win.after(0, lambda: self._sv_status.set(f"Erro na extração: {exc}"))
+            self._win.after(0, lambda: self._btn_aprender.config(
+                text="  Aprender com esta Conversa ▶  "))
+
+    def _extrair_aprendizado(self) -> dict:
+        from config import CLAUDE_API_KEY
+        import anthropic as _ant
+
+        a = self._analise
+        comps = json.loads(a["comportamentos"]) if a.get("comportamentos") else []
+        conversa = "\n".join(
+            f"{'IA' if m['role'] == 'assistant' else 'Operador'}: {m['content']}"
+            for m in self._historico
+        )
+        prompt = _PROMPT_EXTRACAO.format(
+            camera_id=a.get("camera_id", "?"),
+            nivel_risco=a.get("nivel_risco", "?"),
+            comportamentos="; ".join(comps) or "nenhum",
+            acao=a.get("acao_recomendada", "N/A"),
+            confianca=f"{a.get('confianca', 0) * 100:.0f}",
+            conversa=conversa,
+        )
+        client = _ant.Anthropic(api_key=CLAUDE_API_KEY)
+        resp = client.messages.create(
+            model="claude-haiku-4-5-20251001",
+            max_tokens=400,
+            messages=[{"role": "user", "content": prompt}],
+        )
+        text = resp.content[0].text.strip()
+        # Remove markdown se presente
+        text = re.sub(r"^```(?:json)?\s*", "", text, flags=re.MULTILINE)
+        text = re.sub(r"```\s*$", "", text, flags=re.MULTILINE).strip()
+        return json.loads(text)
+
+    def _mostrar_confirmacao(self, dados: dict):
+        """Exibe painel de confirmação com os dados extraídos."""
+        self._dados_extraidos = dados
+
+        dlg = tk.Toplevel(self._win)
+        dlg.title("Confirmar Aprendizado")
+        dlg.configure(bg=BG)
+        dlg.geometry("520x380")
+        dlg.resizable(False, False)
+        dlg.grab_set()
+        dlg.attributes("-topmost", True)
+
+        rotulo_ex = dados.get("rotulo", "falso_positivo")
+        ajuste_ex = dados.get("ajuste_sugerido", "manter")
+        desc_ex   = dados.get("descricao_real", "")
+        just_ex   = dados.get("justificativa", "")
+        obs_ex    = dados.get("observacao", "")
+
+        # Cabeçalho
+        cor_cab = VERDE if rotulo_ex == "correto" else VERMELHO
+        label_rot = "ALERTA CORRETO" if rotulo_ex == "correto" else "FALSO POSITIVO"
+        cab = tk.Frame(dlg, bg=cor_cab, padx=16, pady=10)
+        cab.pack(fill="x")
+        tk.Label(cab, text=f"Aprendizado extraído — {label_rot}",
+                 font=("Segoe UI", 10, "bold"), bg=cor_cab, fg=BG).pack(side="left")
+
+        body = tk.Frame(dlg, bg=BG, padx=18, pady=14)
+        body.pack(fill="both", expand=True)
+
+        def _linha(label, valor, cor=BRANCO):
+            f = tk.Frame(body, bg=BG)
+            f.pack(fill="x", pady=3)
+            tk.Label(f, text=f"{label}:", font=FONT_SMALL, bg=BG, fg=CINZA,
+                     width=22, anchor="w").pack(side="left")
+            tk.Label(f, text=valor, font=FONT_LABEL, bg=BG, fg=cor,
+                     wraplength=320, justify="left", anchor="w").pack(side="left", fill="x")
+
+        _linha("O que acontecia",   desc_ex or "—")
+        _linha("Classificação",     label_rot,
+               VERDE if rotulo_ex == "correto" else VERMELHO)
+        _cor_ajuste = CINZA if ajuste_ex == "manter" else (AZUL if ajuste_ex == "mais_sensivel" else LARANJA)
+        _label_ajuste = {
+            "manter":         "Manter sensibilidade atual",
+            "menos_sensivel": "Reduzir sensibilidade (menos alarmes)",
+            "mais_sensivel":  "Aumentar sensibilidade (detectar mais)",
+        }.get(ajuste_ex, ajuste_ex)
+        _linha("Ajuste de sensibilidade", _label_ajuste, _cor_ajuste)
+        if just_ex:
+            _linha("Motivo",          just_ex, CINZA)
+        if obs_ex:
+            _linha("Obs. p/ calibração", obs_ex)
+
+        # Override de rótulo (caso extração tenha errado)
+        tk.Frame(body, bg=CINZA_ESC, height=1).pack(fill="x", pady=(10, 6))
+        tk.Label(body, text="A classificação está errada? Corrija antes de confirmar:",
+                 font=FONT_SMALL, bg=BG, fg=CINZA).pack(anchor="w")
+
+        frm_ov = tk.Frame(body, bg=BG)
+        frm_ov.pack(fill="x", pady=4)
+        sv_rotulo = tk.StringVar(value=rotulo_ex)
+        tk.Radiobutton(frm_ov, text="Alerta Correto",  variable=sv_rotulo,
+                       value="correto",         bg=BG, fg=VERDE,
+                       selectcolor=BG, font=FONT_SMALL).pack(side="left", padx=(0, 12))
+        tk.Radiobutton(frm_ov, text="Falso Positivo",  variable=sv_rotulo,
+                       value="falso_positivo",  bg=BG, fg=VERMELHO,
+                       selectcolor=BG, font=FONT_SMALL).pack(side="left")
+
+        # Botões de confirmação
+        tk.Frame(body, bg=CINZA_ESC, height=1).pack(fill="x", pady=(10, 6))
+        frm_ok = tk.Frame(body, bg=BG)
+        frm_ok.pack(fill="x")
+
+        def _confirmar():
+            dados["rotulo"] = sv_rotulo.get()
+            dlg.destroy()
+            self._aplicar_aprendizado(dados)
+
+        _btn(frm_ok, "  Confirmar e Aplicar  ", _confirmar,
+             bg=VERDE, fg=BG).pack(side="left")
+        _btn(frm_ok, "  Cancelar  ", dlg.destroy,
+             bg=CINZA_ESC, fg=BRANCO).pack(side="left", padx=(8, 0))
+
+    def _aplicar_aprendizado(self, dados: dict):
+        """Chama o callback e fecha o diálogo."""
+        if self._on_aprendizado:
+            self._on_aprendizado(dados)
+        # Compat: popula on_salvar_obs com observação concisa
+        if self._on_salvar_obs and dados.get("observacao"):
+            self._on_salvar_obs(dados["observacao"])
         self._win.destroy()
 
 
@@ -899,12 +1080,28 @@ class TrainingTab:
             self._sv_fb_status.set("Selecione uma deteccao primeiro.")
             return
 
-        def _ao_salvar(resumo: str):
-            self._text_obs.delete("1.0", "end")
-            self._text_obs.insert("1.0", resumo)
-            self._sv_fb_status.set("Conversa salva na observação — confirme com Correto ou Falso Positivo.")
+        def _ao_aprender(dados: dict):
+            rotulo = dados.get("rotulo", "falso_positivo")
+            obs    = dados.get("observacao", "")
+            ajuste = dados.get("ajuste_sugerido", "manter")
 
-        ChatDialog(self._root, self._analise_selecionada, on_salvar_obs=_ao_salvar)
+            # Preenche observação com o resumo extraído
+            self._text_obs.delete("1.0", "end")
+            if obs:
+                self._text_obs.insert("1.0", obs)
+
+            # Salva feedback com rótulo extraído da conversa
+            self._salvar_feedback(rotulo)
+
+            # Ajuste imediato de sensibilidade (sem esperar calibração estatística)
+            if ajuste != "manter":
+                try:
+                    import mosaic
+                    mosaic.ajuste_direto_todos(ajuste)
+                except Exception:
+                    pass
+
+        ChatDialog(self._root, self._analise_selecionada, on_aprendizado=_ao_aprender)
 
     def _salvar_feedback(self, rotulo: str):
         if not self._analise_selecionada:
@@ -915,6 +1112,11 @@ class TrainingTab:
 
         def _gravar():
             db.salvar_feedback(analise_id, rotulo, obs)
+            try:
+                import mosaic
+                mosaic.recalibrar_todos()
+            except Exception:
+                pass
 
         threading.Thread(target=_gravar, daemon=True).start()
 
@@ -943,16 +1145,39 @@ class TrainingTab:
             f"Falsos Pos.: {stats['falsos_positivos']} ({taxa_str})"
         )
 
-        self._sv_stats_full.set(
-            f"Total de analises:         {stats['total_analises']}\n"
-            f"Total de alertas:          {stats['total_alertas']}\n"
-            f"Feedbacks dados:           {stats['com_feedback']}\n"
-            f"  - Corretos:              {stats['corretos']}\n"
-            f"  - Falsos positivos:      {stats['falsos_positivos']}\n"
-            f"Taxa de falsos positivos:  {taxa_str}\n"
-            f"Perguntas pendentes:       {stats['perguntas_pendentes']}\n"
-            f"Exemplos few-shot ativos:  {stats['exemplos_fewshot']}\n"
-        )
+        linhas_stats = [
+            f"Total de analises:         {stats['total_analises']}",
+            f"Total de alertas:          {stats['total_alertas']}",
+            f"Feedbacks dados:           {stats['com_feedback']}",
+            f"  - Corretos:              {stats['corretos']}",
+            f"  - Falsos positivos:      {stats['falsos_positivos']}",
+            f"Taxa de falsos positivos:  {taxa_str}",
+            f"Perguntas pendentes:       {stats['perguntas_pendentes']}",
+            f"Exemplos few-shot ativos:  {stats['exemplos_fewshot']}",
+            "",
+            "CALIBRAÇÃO POR CÂMERA  (mín. 30 feedbacks para calibrar automaticamente):",
+        ]
+
+        try:
+            import calibrator
+            cameras = db.buscar_cameras_distintas()
+            conn = db.get_connection()
+            if cameras:
+                for cam in cameras:
+                    r = calibrator.resumo_calibracao(conn, cam)
+                    fb    = r["com_feedback"]
+                    falta = max(0, 30 - fb)
+                    barra = "█" * min(fb, 30) + "░" * falta
+                    status = "✔ calibrada" if r["pronto_para_calibrar"] else f"faltam {falta}"
+                    linhas_stats.append(
+                        f"  {cam:<18} [{barra}] {fb:>2}/30  {status}"
+                    )
+            else:
+                linhas_stats.append("  Nenhuma câmera registrada ainda.")
+        except Exception:
+            linhas_stats.append("  (calibrador indisponível)")
+
+        self._sv_stats_full.set("\n".join(linhas_stats))
 
     def _atualizar_perguntas(self):
         perguntas = db.buscar_perguntas_pendentes()
