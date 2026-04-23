@@ -862,12 +862,16 @@ def _slot_camera(slot: CameraSlot, w: int, h: int,
 # Posição do botão API no cabeçalho — atualizada a cada render e usada pelo mouse handler
 _api_btn_range: list[int] = [342, 466]   # [x0, x1]
 
+# Posição do badge de usuário — atualizada a cada render
+_badge_btn_range: list[int] = [0, 0]     # [x0, x1]
+
 
 # ── Cabecalho ─────────────────────────────────────────────────────────────────
 def _cabecalho(n_ativas: int, layout: int, win_w: int,
                usuario_nome: str = "", usuario_grupo: str = "",
                api_online: bool = True, hover_api: bool = False,
-               vision_label: str = "") -> np.ndarray:
+               vision_label: str = "", hover_badge: bool = False,
+               **kwargs) -> np.ndarray:
     img = np.full((HDR_H, win_w, 3), C_BG, dtype=np.uint8)
 
     # Linha de circuito decorativa no topo (3px ouro)
@@ -940,17 +944,19 @@ def _cabecalho(n_ativas: int, layout: int, win_w: int,
     sx = max(titulo_x, (win_w - sw) // 2)
     pil_texts.append((slogan, sx, _ROW1_H + 4, 9, (220, 210, 240), False))
 
-    # ── Badge de usuário (extrema direita) ─────────────────────────────────────
+    # ── Badge de usuário (extrema direita) — clicável para trocar usuário ────────
     if usuario_nome:
         grupo_label = "ADM" if usuario_grupo == "administrador" else "USR"
         badge_cor   = (20, 140, 60) if usuario_grupo == "administrador" else (120, 60, 140)
-        badge_txt   = f"  {usuario_nome} [{grupo_label}]  "
+        badge_txt   = f"  {usuario_nome} [{grupo_label}] ▾  "
         bw, bh      = _txt_size(badge_txt, 9, bold=True)
         bx = win_w - bw - 8
         by = (_ROW1_H - bh) // 2
-        # Fundo do badge com borda ouro
+        _badge_btn_range[0] = bx - 2
+        _badge_btn_range[1] = bx + bw + 2
+        borda_badge = C_TEAL if hover_badge else C_AMARELO
         cv2.rectangle(img, (bx - 2, by - 3), (bx + bw + 2, by + bh + 3), badge_cor, -1)
-        cv2.rectangle(img, (bx - 2, by - 3), (bx + bw + 2, by + bh + 3), C_AMARELO, 1)
+        cv2.rectangle(img, (bx - 2, by - 3), (bx + bw + 2, by + bh + 3), borda_badge, 1)
         pil_texts.append((badge_txt, bx, by, 9, (255, 255, 255), True))
 
     _pil_render(img, pil_texts)
@@ -1044,7 +1050,8 @@ def _montar_mosaico(slots: dict, state: dict) -> np.ndarray:
                          state.get("usuario_grupo", ""),
                          api_online=state.get("api_online", True),
                          hover_api=state.get("hover_api", False),
-                         vision_label=_vision_label())
+                         vision_label=_vision_label(),
+                         hover_badge=state.get("hover_badge", False))
     toolbar = _toolbar(layout, hover_btn, win_w,
                        hover_act_btn=state.get("hover_act_btn", -1),
                        is_admin=(state.get("usuario_grupo") == "administrador"),
@@ -1368,22 +1375,22 @@ def _ctx_inside(ctx: dict, x: int, y: int, iw: int, ih: int) -> bool:
 def _menu_items(is_admin: bool) -> list:
     """Itens do dropdown ☰ Menu."""
     base = [
-        {"label": "Treinar",  "action": "treinar",  "cor": (195, 240, 255)},
+        {"label": "Treinar",  "action": "treinar"},
         {"sep": True},
-        {"label": "Sair",     "action": "sair",     "cor": (235, 225, 255), "danger": True},
+        {"label": "Sair",     "action": "sair",  "danger": True},
     ]
     if not is_admin:
         return base
     return [
-        {"label": "Usuarios", "action": "usuarios", "cor": (185, 255, 195)},
-        {"label": "Backup",   "action": "backup",   "cor": (255, 210, 160)},
-        {"label": "Atualizar", "action": "update",    "cor": (160, 210, 255)},
-        {"label": "Hardware",  "action": "hardware",  "cor": (210, 190, 255)},
-        {"label": "Relatorio",  "action": "relatorio", "cor": (255, 180, 180)},
+        {"label": "Usuarios",  "action": "usuarios"},
+        {"label": "Backup",    "action": "backup"},
+        {"label": "Atualizar", "action": "update"},
+        {"label": "Hardware",  "action": "hardware"},
+        {"label": "Relatorio", "action": "relatorio"},
         {"sep": True},
-        {"label": "Treinar",   "action": "treinar",   "cor": (195, 240, 255)},
+        {"label": "Treinar",   "action": "treinar"},
         {"sep": True},
-        {"label": "Sair",      "action": "sair",      "cor": (235, 225, 255), "danger": True},
+        {"label": "Sair",      "action": "sair",  "danger": True},
     ]
 
 
@@ -1428,23 +1435,25 @@ def _desenhar_menu_dropdown(img: np.ndarray, win_w: int,
 
     # Sombra + fundo
     cv2.rectangle(img, (x0 + 4, y0 + 4), (x1 + 4, y1 + 4), (0, 0, 0), -1)
-    cv2.rectangle(img, (x0, y0), (x1, y1), (28, 28, 28), -1)
-    cv2.rectangle(img, (x0, y0), (x1, y1), (75, 75, 75), 1)
+    cv2.rectangle(img, (x0, y0), (x1, y1), (22, 26, 24), -1)
+    cv2.rectangle(img, (x0, y0), (x1, y1), C_TEAL_ESC, 1)
 
     cy = y0 + _MENU_DROP_PAD_V
     for i, item in enumerate(items):
         if item.get("sep"):
             mid = cy + CTX_SEP_H // 2
-            cv2.line(img, (x0 + 8, mid), (x1 - 8, mid), (65, 65, 65), 1)
+            cv2.line(img, (x0 + 8, mid), (x1 - 8, mid), C_TEAL_ESC, 1)
             cy += CTX_SEP_H
             continue
         iy1 = cy + _MENU_DROP_ITH
+        danger = item.get("danger")
         if i == hover:
-            bg = (35, 18, 18) if item.get("danger") else (45, 45, 12)
+            bg = (25, 20, 45) if danger else (35, 45, 38)
             cv2.rectangle(img, (x0 + 1, cy), (x1 - 1, iy1), bg, -1)
-        cor = (80, 80, 230) if item.get("danger") else item.get("cor", C_BRANCO)
-        if i == hover:
-            cor = (60, 60, 255) if item.get("danger") else C_AMARELO
+        if danger:
+            cor = (80, 80, 200) if i != hover else (60, 60, 230)
+        else:
+            cor = C_CINZA if i != hover else C_TEAL
         cv2.putText(img, item["label"],
                     (x0 + _MENU_DROP_PAD_H, cy + 20),
                     cv2.FONT_HERSHEY_SIMPLEX, 0.42, cor, 1)
@@ -1491,6 +1500,97 @@ def _desenhar_ctx_menu(img: np.ndarray, ctx: dict) -> np.ndarray:
     return img
 
 
+# ── Diálogo de troca de usuário ───────────────────────────────────────────────
+def _dialogo_trocar_usuario() -> dict | None:
+    """Abre popup para selecionar e autenticar outro usuário. Retorna sessão ou None."""
+    import tkinter as tk
+    import auth as _auth
+
+    BG   = "#050A12"; BG_CARD = "#08131E"; AMA = "#2D7A6E"; AESC = "#1F5C52"
+    ENT  = "#0C1825"; BCOR = "#C8E8F8";   CESC = "#152030"
+    VERM = "#FF2255"; VERDE = "#00CC77"
+
+    usuarios = [u for u in _auth.listar_usuarios() if u["ativo"]]
+    if not usuarios:
+        return None
+
+    resultado = [None]
+
+    root = tk.Tk()
+    root.title("Trocar Usuário")
+    root.configure(bg=BG)
+    root.resizable(False, False)
+    root.attributes("-topmost", True)
+
+    # Cabeçalho
+    cab = tk.Frame(root, bg=AMA, padx=16, pady=8)
+    cab.pack(fill="x")
+    tk.Label(cab, text="SPARTA — Trocar Usuário",
+             font=("Segoe UI", 11, "bold"), bg=AMA, fg="#E8F5F3").pack(side="left")
+
+    corpo = tk.Frame(root, bg=BG, padx=24, pady=16)
+    corpo.pack()
+
+    tk.Label(corpo, text="Usuário", font=("Segoe UI", 9),
+             bg=BG, fg=BCOR).pack(anchor="w")
+
+    nomes = [u["nome"] for u in usuarios]
+    var_usuario = tk.StringVar(value=nomes[0])
+    opt = tk.OptionMenu(corpo, var_usuario, *nomes)
+    opt.config(font=("Segoe UI", 10), bg=BG_CARD, fg=BCOR,
+               activebackground=AMA, activeforeground="#E8F5F3",
+               highlightthickness=0, bd=0, relief="flat", width=22)
+    opt["menu"].config(bg=BG_CARD, fg=BCOR, activebackground=AMA,
+                       activeforeground="#E8F5F3", font=("Segoe UI", 10))
+    opt.pack(fill="x", pady=(2, 10))
+
+    tk.Label(corpo, text="Senha", font=("Segoe UI", 9),
+             bg=BG, fg=BCOR).pack(anchor="w")
+    e_senha = tk.Entry(corpo, show="*", font=("Consolas", 10),
+                       bg=ENT, fg=BCOR, insertbackground=AMA,
+                       relief="flat", bd=0, highlightthickness=1,
+                       highlightcolor=AMA, highlightbackground=CESC, width=26)
+    e_senha.pack(fill="x", ipady=5, pady=(2, 4))
+    e_senha.bind("<FocusIn>",  lambda _: e_senha.config(highlightbackground=AMA))
+    e_senha.bind("<FocusOut>", lambda _: e_senha.config(highlightbackground=CESC))
+
+    lbl_erro = tk.Label(corpo, text="", font=("Segoe UI", 8),
+                        bg=BG, fg=VERM)
+    lbl_erro.pack(anchor="w", pady=(0, 6))
+
+    def _confirmar(ev=None):
+        nome  = var_usuario.get()
+        senha = e_senha.get()
+        sessao = _auth.autenticar(nome, senha)
+        if sessao:
+            resultado[0] = sessao
+            root.destroy()
+        else:
+            lbl_erro.config(text="Usuário ou senha incorretos.")
+            e_senha.delete(0, "end")
+            e_senha.focus_set()
+
+    frm_btns = tk.Frame(corpo, bg=BG)
+    frm_btns.pack(fill="x", pady=(4, 0))
+
+    def _btn(parent, txt, cor, cmd):
+        esc = {"#2D7A6E": "#1F5C52"}.get(cor, "#555555")
+        b = tk.Label(parent, text=txt, font=("Segoe UI", 10, "bold"),
+                     bg=cor, fg="#E8F5F3", padx=14, pady=6, cursor="hand2")
+        b.bind("<Enter>",  lambda _: b.config(bg=esc))
+        b.bind("<Leave>",  lambda _: b.config(bg=cor))
+        b.bind("<Button-1>", lambda _: cmd())
+        return b
+
+    _btn(frm_btns, "Entrar", AMA, _confirmar).pack(side="right", padx=(6, 0))
+    _btn(frm_btns, "Cancelar", "#333333", root.destroy).pack(side="right")
+
+    e_senha.bind("<Return>", _confirmar)
+    e_senha.focus_set()
+    root.mainloop()
+    return resultado[0]
+
+
 # ── Loop principal ────────────────────────────────────────────────────────────
 def rodar_mosaico(cfg_principal, sessao: dict = None, intervalo_ia: int = 3):
     import auth as _auth
@@ -1518,6 +1618,7 @@ def rodar_mosaico(cfg_principal, sessao: dict = None, intervalo_ia: int = 3):
         "usuario_grupo": _usuario_grupo,
         "api_online":    True,
         "hover_api":     False,   # mouse sobre indicador API no cabeçalho
+        "hover_badge":   False,   # mouse sobre badge de usuário
         # Menu dropdown
         "menu_aberto":   False,
         "menu_hover":    -1,
@@ -1706,15 +1807,20 @@ def rodar_mosaico(cfg_principal, sessao: dict = None, intervalo_ia: int = 3):
                 return
             return
 
-        # Cabecalho — clique no indicador API abre painel (somente admin)
+        # Cabecalho — clique no indicador API ou no badge de usuário
         if y < HDR_H:
-            state["hover"]     = -1
-            state["hover_btn"] = -1
-            state["hover_api"] = _admin and _api_btn_range[0] <= x <= _api_btn_range[1]
-            if event == cv2.EVENT_LBUTTONDOWN and _admin and _api_btn_range[0] <= x <= _api_btn_range[1]:
-                _panel_pendente[0] = "api"
+            state["hover"]       = -1
+            state["hover_btn"]   = -1
+            state["hover_api"]   = _admin and _api_btn_range[0] <= x <= _api_btn_range[1]
+            state["hover_badge"] = _badge_btn_range[0] <= x <= _badge_btn_range[1]
+            if event == cv2.EVENT_LBUTTONDOWN:
+                if _admin and _api_btn_range[0] <= x <= _api_btn_range[1]:
+                    _panel_pendente[0] = "api"
+                elif _badge_btn_range[0] <= x <= _badge_btn_range[1]:
+                    _panel_pendente[0] = "trocar_usuario"
             return
-        state["hover_api"] = False
+        state["hover_api"]   = False
+        state["hover_badge"] = False
 
         # Se dropdown aberto — tratar hover/clique antes de tudo
         if state.get("menu_aberto"):
@@ -1895,6 +2001,10 @@ def rodar_mosaico(cfg_principal, sessao: dict = None, intervalo_ia: int = 3):
         elif nome == "relatorio":
             from error_reporter import abrir_painel_relatorio
             abrir_painel_relatorio()
+        elif nome == "trocar_usuario":
+            nova = _dialogo_trocar_usuario()
+            if nova:
+                state["nova_sessao"] = nova
         elif isinstance(nome, tuple) and nome[0] == "zona":
             slot = slots.get(nome[1])
             if slot:
@@ -1981,6 +2091,15 @@ def rodar_mosaico(cfg_principal, sessao: dict = None, intervalo_ia: int = 3):
                 nome = _panel_pendente[0]
                 _panel_pendente[0] = None
                 _abrir_panel(nome)
+
+            # Troca de usuário confirmada pelo diálogo
+            if state.get("nova_sessao"):
+                nova = state.pop("nova_sessao")
+                sessao = nova
+                _admin = _auth.eh_admin(nova)
+                state["usuario_nome"]  = nova["nome"]
+                state["usuario_grupo"] = nova["grupo"]
+                log.info("Usuario trocado para: %s (%s)", nova["nome"], nova["grupo"])
 
     finally:
         for slot in slots.values():

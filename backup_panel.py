@@ -378,11 +378,9 @@ def abrir_backup_panel(parent=None, sessao: dict | None = None):
             meta = _ks.server_metadata()
             if meta:
                 dt = meta.get("updated_at", "?")
-                sv_srv.set(f"Servidor: conhecimento disponível — atualizado em {dt}")
-                lbl_srv.config(fg=VERDE)
+                lbl_srv.after(0, lambda: (sv_srv.set(f"Servidor: conhecimento disponível — atualizado em {dt}"), lbl_srv.config(fg=VERDE)))
             else:
-                sv_srv.set("Servidor: sem conhecimento publicado ou indisponível.")
-                lbl_srv.config(fg=CINZA)
+                lbl_srv.after(0, lambda: (sv_srv.set("Servidor: sem conhecimento publicado ou indisponível."), lbl_srv.config(fg=CINZA)))
         threading.Thread(target=_check, daemon=True).start()
 
     _atualizar_status_servidor()
