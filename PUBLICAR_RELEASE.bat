@@ -1,6 +1,6 @@
 @echo off
 setlocal EnableDelayedExpansion
-title SPARTA AGENTE IA - Publicar Release GitHub
+title SPARTA AGENTE IA - Publicar Release Servidor
 color 0A
 
 cd /d "%~dp0"
@@ -54,12 +54,12 @@ set "DIST_DIR=dist\MonitorTapeteOuro"
 echo.
 echo ============================================================
 echo   SPARTA AGENTE IA %TAG%
-echo   Build + Publicacao automatica no GitHub
+echo   Build + Publicacao no servidor self-hosted
 echo ============================================================
 echo.
 
 :: ── ETAPA 1: Verificar Python ─────────────────────────────────────────────
-echo [1/6] Verificando Python...
+echo [1/5] Verificando Python...
 "%PY%" --version >nul 2>&1
 if errorlevel 1 (
     echo [ERRO] Python invalido: %PY%
@@ -68,48 +68,8 @@ if errorlevel 1 (
 echo [OK]
 echo.
 
-:: ── ETAPA 2: Verificar GitHub CLI ─────────────────────────────────────────
-echo [2/6] Verificando GitHub CLI (gh)...
-
-:: Localiza gh.exe nos caminhos conhecidos
-set "GH="
-for %%G in (
-    "C:\Program Files\GitHub CLI\gh.exe"
-    "C:\Program Files (x86)\GitHub CLI\gh.exe"
-) do ( if not defined GH if exist %%G set "GH=%%~G" )
-if not defined GH (
-    for /f "delims=" %%G in ('where gh 2^>nul') do if not defined GH set "GH=%%G"
-)
-
-if not defined GH (
-    echo [INFO] GitHub CLI nao encontrado. Instalando via winget...
-    winget install --id GitHub.cli --source winget --accept-package-agreements --accept-source-agreements --silent
-    :: Atualiza PATH manualmente apos instalacao
-    set "PATH=%PATH%;C:\Program Files\GitHub CLI"
-    for %%G in ("C:\Program Files\GitHub CLI\gh.exe") do if exist %%G set "GH=%%~G"
-)
-if not defined GH (
-    echo.
-    echo [ERRO] GitHub CLI nao encontrado apos instalacao.
-    echo Instale manualmente em https://cli.github.com e reabra o terminal.
-    pause & exit /b 1
-)
-echo [OK] %GH%
-echo.
-
-:: ── Verifica autenticação ─────────────────────────────────────────────────
-"%GH%" auth status >nul 2>&1
-if errorlevel 1 (
-    echo [INFO] Fazendo login no GitHub...
-    "%GH%" auth login
-    if errorlevel 1 (
-        echo [ERRO] Login cancelado.
-        pause & exit /b 1
-    )
-)
-
-:: ── ETAPA 3: Instalar dependencias Python ─────────────────────────────────
-echo [3/6] Instalando dependencias Python...
+:: ── ETAPA 2: Instalar dependencias Python ─────────────────────────────────
+echo [2/5] Instalando dependencias Python...
 "%PY%" -m pip install --upgrade pip --quiet
 "%PY%" -m pip install -r requirements.txt --quiet
 "%PY%" -m pip install pyinstaller pillow --quiet
@@ -120,8 +80,8 @@ if errorlevel 1 (
 echo [OK]
 echo.
 
-:: ── ETAPA 4: Build PyInstaller ────────────────────────────────────────────
-echo [4/6] Gerando executavel (pode demorar 5-10 min)...
+:: ── ETAPA 3: Build PyInstaller ────────────────────────────────────────────
+echo [3/5] Gerando executavel (pode demorar 5-10 min)...
 echo.
 if exist "%DIST_DIR%"  rmdir /s /q "%DIST_DIR%"
 if exist "build\MonitorTapeteOuro" rmdir /s /q "build\MonitorTapeteOuro"
@@ -135,8 +95,26 @@ if errorlevel 1 (
 echo [OK] Executavel em %DIST_DIR%\
 echo.
 
-:: ── ETAPA 5: Empacotar .zip ───────────────────────────────────────────────
-echo [5/6] Empacotando %ZIP_NAME%...
+:: ── ETAPA 3b: Criar .env padrão na pasta dist ─────────────────────────────
+echo [3b] Criando .env padrao com UPDATE_SERVER_URL...
+set "ENV_DIST=%DIST_DIR%\.env"
+if not exist "%ENV_DIST%" (
+    echo UPDATE_SERVER_URL=https://138.186.129.103:4543/latest.json> "%ENV_DIST%"
+    echo [OK] .env criado em %ENV_DIST%
+) else (
+    findstr /i "UPDATE_SERVER_URL" "%ENV_DIST%" >nul 2>&1
+    if errorlevel 1 (
+        echo.>> "%ENV_DIST%"
+        echo UPDATE_SERVER_URL=https://138.186.129.103:4543/latest.json>> "%ENV_DIST%"
+        echo [OK] UPDATE_SERVER_URL adicionado ao .env existente
+    ) else (
+        echo [OK] .env ja contem UPDATE_SERVER_URL
+    )
+)
+echo.
+
+:: ── ETAPA 4: Empacotar .zip ───────────────────────────────────────────────
+echo [4/5] Empacotando %ZIP_NAME%...
 if exist "%ZIP_PATH%" del /f /q "%ZIP_PATH%"
 
 :: Encerra o app se estiver rodando (libera arquivos bloqueados)
@@ -150,37 +128,22 @@ if errorlevel 1 (
 )
 echo.
 
-:: ── ETAPA 6: Publicar Release no GitHub ───────────────────────────────────
-echo [6/6] Publicando Release %TAG% no GitHub...
+:: ── ETAPA 5: Publicar no servidor self-hosted ─────────────────────────────
+echo [5/5] Publicando no servidor self-hosted...
 echo.
 
-"%GH%" release view %TAG% >nul 2>&1
-if not errorlevel 1 (
-    echo [AVISO] Release %TAG% ja existe no GitHub.
-    set /p "SOBRESCREVER=Deseja deletar e recriar? (s/N): "
-    if /i "!SOBRESCREVER!"=="s" (
-        "%GH%" release delete %TAG% --yes --cleanup-tag
-    ) else (
-        echo Operacao cancelada.
-        pause & exit /b 0
-    )
-)
-
-"%GH%" release create %TAG% "%ZIP_PATH%" ^
-    --title "SPARTA AGENTE IA %TAG%" ^
-    --notes "Release automatica gerada pelo PUBLICAR_RELEASE.bat" ^
-    --repo Robsonhub/IVMS-RFSMART-
-
+"%PY%" scripts\upload_to_vm.py "%ZIP_PATH%" "%VERSION%"
 if errorlevel 1 (
     echo.
-    echo [ERRO] Falha ao publicar no GitHub.
+    echo [ERRO] Falha ao publicar no servidor.
+    echo Verifique scripts\.env.publish e a conectividade SSH.
     pause & exit /b 1
 )
 
 echo.
 echo ============================================================
 echo   RELEASE %TAG% PUBLICADA COM SUCESSO!
-echo   https://github.com/Robsonhub/IVMS-RFSMART-/releases/tag/%TAG%
+echo   https://138.186.129.103:4543/latest.json
 echo ============================================================
 echo.
 pause
