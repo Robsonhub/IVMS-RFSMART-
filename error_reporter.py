@@ -250,6 +250,7 @@ def _pasta_relatorios() -> Path:
 def abrir_painel_relatorio(parent_tk=None):
     """Janela de feedback para o operador — simples, sem detalhes técnicos."""
     import tkinter as tk
+    import tkinter.messagebox as _msgbox
 
     from version import APP_NAME
 
@@ -319,16 +320,27 @@ def abrir_painel_relatorio(parent_tk=None):
                 if tem_token:
                     ok = enviar_relatorio_github(zip_path, "envio_operador")
                     if ok:
+                        msg = "Relatorio enviado com sucesso!\n\nSalvo em:\n" + str(local)
                         root.after(0, lambda: _set_status(
                             "Relatorio enviado e salvo em:\n" + str(local), VERDE))
+                        root.after(0, lambda: _msgbox.showinfo(
+                            "Relatorio Enviado", msg, parent=root))
                     else:
+                        msg = "Enviado localmente (falha no envio remoto).\n\nSalvo em:\n" + str(local)
                         root.after(0, lambda: _set_status(
                             "Enviado localmente (falha no envio remoto):\n" + str(local), AMA))
+                        root.after(0, lambda: _msgbox.showwarning(
+                            "Envio Parcial", msg, parent=root))
                 else:
+                    msg = "Relatorio salvo localmente em:\n" + str(local)
                     root.after(0, lambda: _set_status(
                         "Relatorio salvo em:\n" + str(local), VERDE))
+                    root.after(0, lambda: _msgbox.showinfo(
+                        "Relatorio Salvo", msg, parent=root))
             except Exception as exc:
                 root.after(0, lambda: _set_status(f"Erro: {exc}", VERM))
+                root.after(0, lambda: _msgbox.showerror(
+                    "Erro no Relatorio", str(exc), parent=root))
             finally:
                 if zip_path and zip_path.exists():
                     try:
