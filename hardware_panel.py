@@ -17,8 +17,8 @@ log = logging.getLogger(__name__)
 BG      = "#050A12"
 BG_CARD = "#06101A"
 BG_ROW  = "#08131E"
-AMA     = "#C4900A"
-AESC    = "#9E7308"
+AMA     = "#2D7A6E"
+AESC    = "#1F5C52"
 BCOR    = "#C8E8F8"
 CINZA   = "#4A6070"
 CESC    = "#152030"
@@ -332,7 +332,7 @@ def abrir_hardware_panel():
     cab.pack(fill="x")
     tk.Label(cab, text="Monitor de Hardware", font=FONT_T, bg=AMA, fg=BG).pack(side="left")
     sv_ts = tk.StringVar(value="")
-    tk.Label(cab, textvariable=sv_ts, font=FONT_S, bg=AMA, fg="#003B4D").pack(side="right")
+    tk.Label(cab, textvariable=sv_ts, font=FONT_S, bg=AMA, fg="#E8F5F3").pack(side="right")
 
     # ── Rodapé fixo ───────────────────────────────────────────────────────────
     frm_rod = tk.Frame(root, bg="#04080F", padx=20, pady=8)

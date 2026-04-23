@@ -47,8 +47,10 @@ _MENU_DROP_PAD_H = 14
 # ── Cores BGR — paleta RRF Smart Security ────────────────────────────────────
 C_BG      = ( 18,  10,   5)
 C_CARD    = ( 30,  19,   8)
-C_AMARELO = (255, 212,   0)
-C_OURO2   = (158, 122,   0)
+C_AMARELO = (110, 122,  45)   # #2D7A6E teal militar — BGR
+C_OURO2   = ( 82,  92,  31)   # #1F5C52 teal escuro — BGR
+C_TEAL    = (110, 122,  45)   # #2D7A6E teal militar — BGR
+C_TEAL_ESC= ( 82,  92,  31)   # #1F5C52 teal hover — BGR
 C_BRANCO  = (248, 232, 200)
 C_CINZA   = (112,  96,  74)
 C_VERDE   = (119, 204,   0)

@@ -22,8 +22,8 @@ log = logging.getLogger(__name__)
 
 BG       = "#050A12"
 BG_CARD  = "#08131E"
-AMA      = "#C4900A"
-AESC     = "#9E7308"
+AMA      = "#2D7A6E"
+AESC     = "#1F5C52"
 ENT      = "#0C1825"
 BCOR     = "#C8E8F8"
 CINZA    = "#6A8098"
@@ -272,7 +272,7 @@ def abrir_backup_panel(parent=None, sessao: dict | None = None):
     cab.pack(fill="x")
     tk.Label(cab, text="Backup Avançado", font=FONT_T, bg=AMA, fg=BG).pack(side="left")
     tk.Label(cab, text="(somente administrador)", font=("Segoe UI", 8),
-             bg=AMA, fg="#3D2200").pack(side="right")
+             bg=AMA, fg="#E8F5F3").pack(side="right")
 
     corpo = tk.Frame(root, bg=BG, padx=24, pady=16)
     corpo.pack(fill="both")

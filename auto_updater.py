@@ -311,7 +311,7 @@ def abrir_dialog_update(parent_tk=None):
     import tkinter as tk
 
     BG    = "#0F0F0F"
-    AMA   = "#C4900A"
+    AMA   = "#2D7A6E"
     BCOR  = "#F0F0F0"
     CINZA = "#888888"
     VERM  = "#FF4444"

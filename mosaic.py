@@ -34,6 +34,7 @@ from mosaic_constants import (
     _ACT_BTN_W, _ACT_BTN_GAP, _MENU_BTN_W, _MENU_DROP_W,
     _MENU_DROP_ITH, _MENU_DROP_PAD_V, _MENU_DROP_PAD_H,
     C_BG, C_CARD, C_AMARELO, C_OURO2, C_BRANCO, C_CINZA,
+    C_TEAL, C_TEAL_ESC,
     C_VERDE, C_VERM, C_LARAN, C_AZUL, NIVEL_COR, CAMERAS_JSON,
 )
 
@@ -523,7 +524,7 @@ def _slot_vazio(idx: int, hover: bool, w: int, h: int) -> np.ndarray:
 
     # Colchetes de canto (estilo tático)
     arm   = max(10, min(24, min(w, h) // 8))
-    borda = C_AMARELO if hover else (90, 70, 30)
+    borda = C_TEAL if hover else C_TEAL_ESC
     thick = 2 if hover else 1
     for px, py, dx, dy in [(1, 1, 1, 0), (w-2, 1, -1, 0),
                             (1, h-2, 1, 0), (w-2, h-2, -1, 0)]:
@@ -544,7 +545,7 @@ def _slot_vazio(idx: int, hover: bool, w: int, h: int) -> np.ndarray:
         r_out = max(14, min(32, min(w, h) // 7))
         r_in  = max(4,  r_out // 3)
         gap   = r_out // 4
-        reticle_cor = C_AMARELO if hover else (75, 70, 90)
+        reticle_cor = C_TEAL if hover else C_TEAL_ESC
         shadow_cor  = (0, 0, 0)
 
         cy_ico = cy - 12 if h > 90 else cy
@@ -574,12 +575,12 @@ def _slot_vazio(idx: int, hover: bool, w: int, h: int) -> np.ndarray:
 
         if h > 90:
             txt     = "[ ADICIONAR CAMERA ]"
-            txt_cor = C_AMARELO if hover else (80, 75, 95)
+            txt_cor = C_TEAL if hover else C_TEAL_ESC
             tw, _   = _txt_size(txt, FS_ADD)
             pil_texts.append((txt, (w - tw) // 2, cy_ico + r_out + 8, FS_ADD, txt_cor, False))
 
     lbl = f"SLOT {idx + 1:02d}"
-    pil_texts.append((lbl, 6, 4, FS_SLOT, (65, 60, 78), False))
+    pil_texts.append((lbl, 6, 4, FS_SLOT, C_TEAL_ESC, False))
     _pil_render(img, pil_texts)
     return img
 
@@ -1149,7 +1150,7 @@ def _dialogo_adicionar(slot_idx: int, cfg_atual: dict = None) -> dict | None:
     import queue as _queue
     import threading as _th
 
-    BG2 = "#0F0F0F"; AMA = "#C4900A"; AESC = "#9E7308"
+    BG2 = "#0F0F0F"; AMA = "#2D7A6E"; AESC = "#1F5C52"
     ENT = "#242424"; BCOR = "#F0F0F0"; CESC = "#333333"
     VERDE = "#3DCC7E"; VERM = "#FF4444"
 
@@ -1277,7 +1278,7 @@ def _dialogo_adicionar(slot_idx: int, cfg_atual: dict = None) -> dict | None:
             lbl_status.config(text="Informe o IP ou uma URI RTSP manual.", fg=VERM)
             return
         _ocupado[0] = True
-        btn.config(bg="#9E7308")
+        btn.config(bg="#1F5C52")
         lbl_status.config(text="Aguarde...", fg=AMA)
         _th.Thread(target=_worker, args=(cfg_cam, uri_manual), daemon=True).start()
 

@@ -7,8 +7,8 @@ import auth
 BG    = "#050A12"
 BG2   = "#08131E"
 BG3   = "#0A1520"
-AMA   = "#C4900A"
-AESC  = "#9E7308"
+AMA   = "#2D7A6E"
+AESC  = "#1F5C52"
 ENT   = "#0C1825"
 BCOR  = "#C8E8F8"
 CESC  = "#152030"
@@ -49,7 +49,7 @@ def abrir_usuarios_panel(sessao: dict):
     tk.Label(cab, text="SPARTA  —  Gerenciamento de Usuarios",
              font=("Segoe UI", 11, "bold"), bg=AMA, fg=BG).pack(side="left")
     tk.Label(cab, text="Administrador",
-             font=("Segoe UI", 8), bg=AMA, fg="#003B4D").pack(side="right")
+             font=("Segoe UI", 8), bg=AMA, fg="#E8F5F3").pack(side="right")
 
     # ── Lista de usuarios ─────────────────────────────────────────────────────
     frm_lista = tk.Frame(root, bg=BG3, padx=12, pady=10)

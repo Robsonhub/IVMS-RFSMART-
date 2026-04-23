@@ -23,8 +23,8 @@ log = logging.getLogger(__name__)
 # ── Constantes visuais ─────────────────────────────────────────────────────────
 BG      = "#0F0F0F"
 BG_CARD = "#1A1A1A"
-AMA     = "#C4900A"
-AESC    = "#9E7308"
+AMA     = "#2D7A6E"
+AESC    = "#1F5C52"
 BCOR    = "#F0F0F0"
 CINZA   = "#888888"
 CESC    = "#333333"

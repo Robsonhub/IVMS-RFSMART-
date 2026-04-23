@@ -6,8 +6,8 @@ import auth
 
 BG   = "#0F0F0F"
 BG2  = "#181818"
-AMA  = "#C4900A"
-AESC = "#9E7308"
+AMA  = "#2D7A6E"
+AESC = "#1F5C52"
 ENT  = "#242424"
 BCOR = "#F0F0F0"
 CESC = "#333333"
