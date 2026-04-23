@@ -311,7 +311,7 @@ def abrir_dialog_update(parent_tk=None):
     import tkinter as tk
 
     BG    = "#0F0F0F"
-    AMA   = "#FFD000"
+    AMA   = "#C4900A"
     BCOR  = "#F0F0F0"
     CINZA = "#888888"
     VERM  = "#FF4444"
@@ -329,7 +329,7 @@ def abrir_dialog_update(parent_tk=None):
     tk.Label(cab, text="Verificar Atualização",
              font=("Segoe UI", 11, "bold"), bg=AMA, fg=BG).pack(side="left")
     tk.Label(cab, text=f"v{VERSION}",
-             font=("Segoe UI", 9), bg=AMA, fg="#666600").pack(side="right")
+             font=("Segoe UI", 9), bg=AMA, fg="#FFE0A0").pack(side="right")
 
     corpo = tk.Frame(root, bg=BG, padx=24, pady=16)
     corpo.pack(fill="both")

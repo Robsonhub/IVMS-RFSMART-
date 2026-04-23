@@ -6,8 +6,8 @@ import auth
 
 BG   = "#0F0F0F"
 BG2  = "#181818"
-AMA  = "#FFD000"
-AESC = "#B39200"
+AMA  = "#C4900A"
+AESC = "#9E7308"
 ENT  = "#242424"
 BCOR = "#F0F0F0"
 CESC = "#333333"
@@ -63,7 +63,7 @@ def abrir_perfil_panel(sessao: dict):
                      font=("Segoe UI", 9, "bold"),
                      bg=cor, fg=BG, padx=10, pady=7, cursor="hand2")
         b.bind("<Button-1>", lambda _: cmd())
-        esc = "#B39200" if cor == AMA else "#CC3333" if cor == VERM else "#336699"
+        esc = "#9E7308" if cor == AMA else "#CC3333" if cor == VERM else "#336699"
         b.bind("<Enter>", lambda _: b.config(bg=esc))
         b.bind("<Leave>", lambda _: b.config(bg=cor))
         b.pack(fill="x", pady=(2, 6))

@@ -1149,7 +1149,7 @@ def _dialogo_adicionar(slot_idx: int, cfg_atual: dict = None) -> dict | None:
     import queue as _queue
     import threading as _th
 
-    BG2 = "#0F0F0F"; AMA = "#FFD000"; AESC = "#B39200"
+    BG2 = "#0F0F0F"; AMA = "#C4900A"; AESC = "#9E7308"
     ENT = "#242424"; BCOR = "#F0F0F0"; CESC = "#333333"
     VERDE = "#3DCC7E"; VERM = "#FF4444"
 
@@ -1277,7 +1277,7 @@ def _dialogo_adicionar(slot_idx: int, cfg_atual: dict = None) -> dict | None:
             lbl_status.config(text="Informe o IP ou uma URI RTSP manual.", fg=VERM)
             return
         _ocupado[0] = True
-        btn.config(bg="#666600")
+        btn.config(bg="#9E7308")
         lbl_status.config(text="Aguarde...", fg=AMA)
         _th.Thread(target=_worker, args=(cfg_cam, uri_manual), daemon=True).start()
 

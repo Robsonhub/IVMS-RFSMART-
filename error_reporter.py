@@ -254,7 +254,7 @@ def abrir_painel_relatorio(parent_tk=None):
     from version import APP_NAME
 
     BG    = "#0F0F0F"
-    AMA   = "#FFD000"
+    AMA   = "#C4900A"
     VERDE = "#3DCC7E"
     VERM  = "#FF4444"
     CINZA = "#888888"
@@ -272,7 +272,7 @@ def abrir_painel_relatorio(parent_tk=None):
     tk.Label(cab, text="Relatorio de Erros / Melhorias",
              font=("Segoe UI", 11, "bold"), bg=AMA, fg=BG).pack(side="left")
     tk.Label(cab, text=f"v{VERSION}",
-             font=("Segoe UI", 9), bg=AMA, fg="#666600").pack(side="right")
+             font=("Segoe UI", 9), bg=AMA, fg="#FFE0A0").pack(side="right")
 
     corpo = tk.Frame(root, bg=BG, padx=24, pady=16)
     corpo.pack(fill="both")
@@ -353,7 +353,7 @@ def abrir_painel_relatorio(parent_tk=None):
     frm_btns.pack(fill="x", pady=(4, 0))
 
     def _btn(parent, txt, cor, cmd):
-        esc = {"#3DCC7E": "#2EAA66", "#FFD000": "#BB9900"}.get(cor, "#555555")
+        esc = {"#3DCC7E": "#2EAA66", "#C4900A": "#9E7308"}.get(cor, "#555555")
         b = tk.Label(parent, text=txt, font=("Segoe UI", 10, "bold"),
                      bg=cor, fg=BG, padx=12, pady=8, cursor="hand2")
         b.bind("<Enter>", lambda _: b.config(bg=esc))
