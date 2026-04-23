@@ -874,8 +874,8 @@ class TrainingTab:
 
         frm_sync = tk.Frame(painel, bg=BG_CARD)
         frm_sync.pack(anchor="w")
-        _btn(frm_sync, "  Enviar  ", AMARELO, self._sync_enviar).pack(side="left", padx=(0, 4))
-        _btn(frm_sync, "  Receber  ", VERDE, self._sync_receber).pack(side="left")
+        _btn(frm_sync, "  Enviar  ", self._sync_enviar, AMARELO).pack(side="left", padx=(0, 4))
+        _btn(frm_sync, "  Receber  ", self._sync_receber, VERDE).pack(side="left")
 
         tk.Frame(painel, bg=CINZA_ESC, height=1).pack(fill="x", pady=(10, 8))
         tk.Label(painel, text="DICA", font=("Segoe UI", 8, "bold"),
@@ -914,10 +914,8 @@ class TrainingTab:
 
         def _run():
             try:
-                db_path = self._root._db_path if hasattr(self._root, "_db_path") else None
-                if db_path is None:
-                    import db as _db
-                    db_path = _db._db_path()
+                import db as _db
+                db_path = _db.DB_PATH
                 zip_path = export_knowledge(db_path)
                 resultado = upload_via_http(zip_path)
                 novos = resultado.get("novos", 0) if isinstance(resultado, dict) else 0
@@ -936,7 +934,7 @@ class TrainingTab:
         def _run():
             try:
                 import db as _db
-                db_path = _db._db_path()
+                db_path = _db.DB_PATH
                 zip_path, meta = download_from_server()
                 novos, existentes = import_knowledge(zip_path, db_path)
                 self._sv_sync_status.set(
