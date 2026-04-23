@@ -96,11 +96,23 @@ def gerar_zip_relatorio(motivo: str = "manual", extra: dict | None = None) -> Pa
         **(extra or {}),
     }
 
+    # Localiza monitor.log corretamente em modo frozen e dev
+    if getattr(sys, "frozen", False):
+        log_path = Path(sys.executable).parent / "monitor.log"
+    else:
+        log_path = Path(__file__).parent / "monitor.log"
+
     with zipfile.ZipFile(tmp, "w", zipfile.ZIP_DEFLATED) as zf:
         zf.writestr("info.json", json.dumps(info, indent=2, ensure_ascii=False))
-        log_path = Path(__file__).parent / "monitor.log"
         if log_path.exists():
-            zf.write(log_path, "monitor.log")
+            # Inclui apenas os últimos 500 KB para evitar travar em logs grandes
+            tamanho = log_path.stat().st_size
+            limite  = 500 * 1024
+            with log_path.open("rb") as f:
+                if tamanho > limite:
+                    f.seek(-limite, 2)
+                conteudo = f.read()
+            zf.writestr("monitor.log", conteudo)
 
     return tmp
 
