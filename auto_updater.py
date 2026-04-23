@@ -24,7 +24,7 @@ log = logging.getLogger(__name__)
 _TIMEOUT = 10
 
 
-_UPDATE_URL_DEFAULT = "https://138.186.129.103:4543/latest.json"
+_UPDATE_URL_DEFAULT = "https://138.186.129.103:8443/latest.json"
 _GITHUB_REPO_DEFAULT = "Robsonhub/IVMS-RFSMART-"
 
 
@@ -48,6 +48,20 @@ def _cert_path() -> str | None:
         base = Path(__file__).parent
     cert = base / "assets" / "update_server.crt"
     return str(cert) if cert.exists() else None
+
+
+def _rebase_url(download_url: str) -> str:
+    """Substitui host/porta da URL de download pelo servidor configurado em UPDATE_SERVER_URL.
+
+    Garante que máquinas com IP interno usem o servidor interno para baixar
+    o zip, mesmo que o latest.json tenha o IP público.
+    """
+    from urllib.parse import urlparse, urlunparse
+    base   = urlparse(_update_url())
+    target = urlparse(download_url)
+    return urlunparse((base.scheme, base.netloc,
+                       target.path, target.params,
+                       target.query, target.fragment))
 
 
 def _versao_para_tuple(v: str) -> tuple:
@@ -84,7 +98,7 @@ def _verificar_servidor_local() -> tuple[str, dict | str | None]:
 
     return ("disponivel", {
         "versao":       versao_remota,
-        "url_download": url_download,
+        "url_download": _rebase_url(url_download),
         "notas":        str(data.get("notes", ""))[:500],
         "tamanho":      int(data.get("size", 0)),
         "sha256":       sha256,
