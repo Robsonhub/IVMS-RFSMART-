@@ -28,7 +28,7 @@ _ASSETS_DIR = (_BASE / "assets"
                else Path(__file__).parent / "assets")
 
 # ── Servidor ──────────────────────────────────────────────────────────────────
-_URL_DEFAULT = "https://138.186.129.103:4543"
+_URL_DEFAULT = "https://138.186.129.103:8443"
 _KNOWLEDGE_ENDPOINT = "/knowledge/knowledge.zip"
 _META_ENDPOINT      = "/knowledge/knowledge.json"
 
