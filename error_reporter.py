@@ -1,12 +1,12 @@
-"""Coleta e envia relatórios de erros/bugs para o repositório GitHub.
+"""Coleta e envia relatórios de erros/bugs para o servidor local SPARTA.
 
 Fluxo:
   1. Coleta logs + info do sistema + config de câmeras (senhas removidas)
   2. Empacota em zip
-  3. Envia como asset da release "bug-reports" no GitHub
-  4. Rotaciona assets antigos quando total > LIMITE_GB
+  3. POST para https://<servidor>/relatorios/upload (cert pinning)
+  4. Salva cópia local em Documents/SPARTA_Relatorios
 
-GITHUB_TOKEN deve estar no .env com permissão repo (ou public_repo para repo público).
+REPORT_SERVER_URL e REPORT_SERVER_TOKEN devem estar no .env.
 """
 import json
 import logging
@@ -14,6 +14,7 @@ import os
 import platform
 import re
 import socket
+import sys
 import tempfile
 import threading
 import zipfile
@@ -26,22 +27,27 @@ from version import VERSION
 
 log = logging.getLogger(__name__)
 
-_LIMITE_GB    = 10          # dispara limpeza quando total ultrapassa esse valor
-_ALVO_GB      = 7           # limpa até esse patamar, deixando ~3 GB de buffer livre
-_LIMITE_BYTES = _LIMITE_GB * 1024 ** 3
-_ALVO_BYTES   = _ALVO_GB   * 1024 ** 3
-_TAG_RELEASE  = "bug-reports"
-_TIMEOUT      = 30
+_TIMEOUT = 30
+
+_REPORT_URL_DEFAULT   = "https://138.186.129.103:8443/relatorios/upload"
+_REPORT_TOKEN_DEFAULT = ""
 
 
-def _github_token() -> str:
-    from config import GITHUB_TOKEN
-    return GITHUB_TOKEN
+def _report_url() -> str:
+    return os.getenv("REPORT_SERVER_URL", _REPORT_URL_DEFAULT)
 
 
-def _github_repo() -> str:
-    from config import GITHUB_REPO
-    return GITHUB_REPO
+def _report_token() -> str:
+    return os.getenv("REPORT_SERVER_TOKEN", _REPORT_TOKEN_DEFAULT)
+
+
+def _cert_path() -> str | None:
+    if getattr(sys, "frozen", False):
+        base = Path(getattr(sys, "_MEIPASS", Path(sys.executable).parent))
+    else:
+        base = Path(__file__).parent
+    cert = base / "assets" / "update_server.crt"
+    return str(cert) if cert.exists() else None
 
 
 def _sanitizar_uri(uri: str) -> str:
@@ -116,106 +122,34 @@ def exportar_relatorio(destino: Path | None = None) -> Path | None:
         return None
 
 
-# ── GitHub ────────────────────────────────────────────────────────────────────
+# ── Servidor local ────────────────────────────────────────────────────────────
 
-def _headers() -> dict:
-    return {
-        "Authorization":        f"Bearer {_github_token()}",
-        "Accept":               "application/vnd.github+json",
-        "X-GitHub-Api-Version": "2022-11-28",
-    }
+def enviar_relatorio_servidor(zip_path: Path, motivo: str = "auto") -> bool:
+    """POST do zip para o servidor SPARTA via HTTPS com cert pinning."""
+    url   = _report_url()
+    token = _report_token()
+    cert  = _cert_path()
 
-
-def _garantir_release(api: str) -> int | None:
-    """Retorna ID da release 'bug-reports', criando se não existir."""
-    hdrs = _headers()
-    try:
-        r = requests.get(f"{api}/releases/tags/{_TAG_RELEASE}", headers=hdrs, timeout=_TIMEOUT)
-        if r.status_code == 200:
-            return r.json()["id"]
-        if r.status_code == 404:
-            body = {
-                "tag_name":   _TAG_RELEASE,
-                "name":       "Bug Reports — SPARTA AGENTE IA",
-                "body":       "Relatórios de erros enviados automaticamente pelo app.",
-                "draft":      False,
-                "prerelease": True,
-            }
-            r2 = requests.post(f"{api}/releases", headers=hdrs, json=body, timeout=_TIMEOUT)
-            r2.raise_for_status()
-            return r2.json()["id"]
-    except Exception as exc:
-        log.warning("Falha ao garantir release bug-reports: %s", exc)
-    return None
-
-
-def _rotacionar_assets(api: str, release_id: int) -> None:
-    """Remove assets mais antigos quando total ultrapassa LIMITE_GB.
-
-    Ao limpar, vai até ALVO_GB (não apenas até o limite), garantindo
-    buffer de ~3 GB para novas entradas sem lotar imediatamente.
-    """
-    hdrs = _headers()
-    try:
-        r = requests.get(f"{api}/releases/{release_id}/assets",
-                         headers=hdrs, timeout=_TIMEOUT)
-        r.raise_for_status()
-        assets = sorted(r.json(), key=lambda a: a["created_at"])
-        total  = sum(a["size"] for a in assets)
-        if total <= _LIMITE_BYTES:
-            return  # dentro do limite, nada a fazer
-        log.info("Relatórios: %.1f GB > limite %d GB — limpando até %d GB (buffer livre ~%d GB)",
-                 total / 1024**3, _LIMITE_GB, _ALVO_GB, _LIMITE_GB - _ALVO_GB)
-        removidos = 0
-        while total > _ALVO_BYTES and assets:
-            a = assets.pop(0)
-            requests.delete(f"{api}/releases/assets/{a['id']}",
-                            headers=hdrs, timeout=_TIMEOUT)
-            total -= a["size"]
-            removidos += 1
-            log.info("  Removido: %s (%.1f MB) — restante: %.1f GB",
-                     a["name"], a["size"] / 1e6, total / 1024**3)
-        log.info("Rotação concluída: %d relatório(s) removido(s). Total atual: %.1f GB",
-                 removidos, total / 1024**3)
-    except Exception as exc:
-        log.warning("Falha na rotação de assets: %s", exc)
-
-
-def enviar_relatorio_github(zip_path: Path, motivo: str = "auto") -> bool:
-    """Faz upload do zip como asset da release 'bug-reports' no GitHub."""
-    token = _github_token()
-    repo  = _github_repo()
     if not token:
-        log.warning("GITHUB_TOKEN não configurado — relatório não enviado.")
+        log.warning("REPORT_SERVER_TOKEN não configurado — relatório não enviado.")
         return False
-    if not repo:
-        log.warning("GITHUB_REPO não configurado — relatório não enviado.")
-        return False
-
-    api = f"https://api.github.com/repos/{repo}"
-    release_id = _garantir_release(api)
-    if not release_id:
+    if not cert:
+        log.warning("Certificado update_server.crt ausente — relatório não enviado.")
         return False
 
-    _rotacionar_assets(api, release_id)
-
-    upload_url = (
-        f"https://uploads.github.com/repos/{repo}/releases/{release_id}"
-        f"/assets?name={zip_path.name}"
-    )
+    headers = {
+        "Authorization": f"Bearer {token}",
+        "Content-Type":  "application/zip",
+    }
     try:
         with zip_path.open("rb") as f:
-            r = requests.post(
-                upload_url,
-                headers={**_headers(), "Content-Type": "application/zip"},
-                data=f,
-                timeout=120,
-            )
+            r = requests.post(url, headers=headers, data=f,
+                              timeout=_TIMEOUT, verify=cert)
         r.raise_for_status()
-        log.info("Relatório enviado ao GitHub: %s (motivo=%s)", zip_path.name, motivo)
+        log.info("Relatório enviado ao servidor: %s (motivo=%s)", zip_path.name, motivo)
         return True
     except Exception as exc:
-        log.warning("Falha ao enviar relatório ao GitHub: %s", exc)
+        log.warning("Falha ao enviar relatório ao servidor: %s", exc)
         return False
 
 
@@ -225,7 +159,7 @@ def relatar_automatico(motivo: str, extra: dict | None = None) -> None:
         zip_path = None
         try:
             zip_path = gerar_zip_relatorio(motivo, extra)
-            enviar_relatorio_github(zip_path, motivo)
+            enviar_relatorio_servidor(zip_path, motivo)
         except Exception as exc:
             log.warning("Erro no envio automático de relatório: %s", exc)
         finally:
@@ -315,10 +249,10 @@ def abrir_painel_relatorio(parent_tk=None):
                 local  = pasta / zip_path.name
                 import shutil
                 shutil.copy2(str(zip_path), str(local))
-                # Tenta enviar ao repositório se token configurado
-                tem_token = bool(_github_token())
+                # Tenta enviar ao servidor se token configurado
+                tem_token = bool(_report_token())
                 if tem_token:
-                    ok = enviar_relatorio_github(zip_path, "envio_operador")
+                    ok = enviar_relatorio_servidor(zip_path, "envio_operador")
                     if ok:
                         msg = "Relatorio enviado com sucesso!\n\nSalvo em:\n" + str(local)
                         root.after(0, lambda: _set_status(
