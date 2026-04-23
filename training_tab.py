@@ -43,8 +43,8 @@ _PROMPT_EXTRACAO = (
 # ── Paleta ─────────────────────────────────────────────────────────────────────
 BG          = "#050A12"
 BG_CARD     = "#08131E"
-AMARELO     = "#00D4FF"
-AMARELO_ESC = "#007A9E"
+AMARELO     = "#C4900A"
+AMARELO_ESC = "#9E7308"
 BRANCO      = "#C8E8F8"
 CINZA       = "#4A6070"
 CINZA_ESC   = "#152030"

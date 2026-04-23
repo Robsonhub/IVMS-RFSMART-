@@ -25,7 +25,7 @@ except ImportError:
 BG        = "#050A12"
 BG_CARD   = "#08131E"
 BG_ROW    = "#0C1E2E"
-AMARELO   = "#00D4FF"
+AMARELO   = "#C4900A"
 BRANCO    = "#C8E8F8"
 CINZA     = "#4A6070"
 CINZA_ESC = "#152030"
@@ -34,7 +34,7 @@ VERMELHO  = "#FF2255"
 
 # Cores das zonas (BGR OpenCV | hex Tkinter)
 _CORES = [
-    {"bgr": (255, 212,   0), "hex": "#00D4FF"},
+    {"bgr": ( 10, 144, 196), "hex": "#C4900A"},
     {"bgr": (119, 204,   0), "hex": "#00CC77"},
     {"bgr": (153,  68, 255), "hex": "#FF4499"},
     {"bgr": (  0, 165, 255), "hex": "#FFA500"},

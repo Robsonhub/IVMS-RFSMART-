@@ -6,8 +6,8 @@ from tkinter import messagebox
 import auth
 
 BG   = "#050A12"
-AMA  = "#00D4FF"
-AESC = "#007A9E"
+AMA  = "#C4900A"
+AESC = "#9E7308"
 ENT  = "#0C1825"
 BCOR = "#C8E8F8"
 CESC = "#152030"
