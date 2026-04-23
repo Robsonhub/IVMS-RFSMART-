@@ -151,7 +151,43 @@ def export_knowledge(db_path: Path) -> Path:
     return zip_path
 
 
-# ── Upload ────────────────────────────────────────────────────────────────────
+# ── Upload via HTTP (máquinas cliente) ───────────────────────────────────────
+def upload_via_http(zip_path: Path, on_progress=None) -> None:
+    """Envia knowledge.zip ao servidor via HTTPS com cert pinning.
+    Disponível para qualquer máquina — não requer SSH.
+    Levanta RuntimeError se falhar.
+    """
+    import requests as _req
+
+    base  = _base_url()
+    url   = f"{base}/knowledge/upload"
+    token = _lenv("REPORT_SERVER_TOKEN", "")
+    cert  = _cert_path()
+
+    if not token:
+        raise RuntimeError("REPORT_SERVER_TOKEN não configurado no .env")
+
+    if on_progress:
+        on_progress("Enviando knowledge ao servidor...")
+
+    headers = {
+        "Authorization": f"Bearer {token}",
+        "Content-Type":  "application/zip",
+    }
+    try:
+        with zip_path.open("rb") as f:
+            r = _req.post(url, headers=headers, data=f,
+                          timeout=60, verify=cert)
+        r.raise_for_status()
+        resultado = r.json()
+        log.info("Knowledge enviado: %d novo(s), total %d",
+                 resultado.get("novos", 0), resultado.get("total", 0))
+        return resultado
+    except Exception as exc:
+        raise RuntimeError(f"Falha ao enviar knowledge: {exc}") from exc
+
+
+# ── Upload via SSH (admin) ────────────────────────────────────────────────────
 def upload_to_server(zip_path: Path, on_progress=None) -> None:
     """
     Envia knowledge.zip para o servidor via SCP.

@@ -859,6 +859,25 @@ class TrainingTab:
                  font=FONT_LABEL, bg=BG_CARD, fg=VERDE).pack(anchor="w", pady=(5, 0))
 
         tk.Frame(painel, bg=CINZA_ESC, height=1).pack(fill="x", pady=(10, 8))
+
+        # ── Sync de aprendizado ───────────────────────────────────────────────
+        tk.Label(painel, text="SINCRONIZAR APRENDIZADO",
+                 font=("Segoe UI", 8, "bold"), bg=BG_CARD, fg=AMARELO).pack(anchor="w")
+        tk.Label(painel,
+                 text="Envia os exemplos locais ao servidor\ne baixa o conhecimento de todas\nas máquinas.",
+                 font=FONT_SMALL, bg=BG_CARD, fg=CINZA, justify="left").pack(anchor="w", pady=(2, 6))
+
+        self._sv_sync_status = tk.StringVar(value="")
+        tk.Label(painel, textvariable=self._sv_sync_status,
+                 font=FONT_SMALL, bg=BG_CARD, fg=VERDE,
+                 wraplength=280, justify="left").pack(anchor="w", pady=(0, 4))
+
+        frm_sync = tk.Frame(painel, bg=BG_CARD)
+        frm_sync.pack(anchor="w")
+        _btn(frm_sync, "  Enviar  ", AMARELO, self._sync_enviar).pack(side="left", padx=(0, 4))
+        _btn(frm_sync, "  Receber  ", VERDE, self._sync_receber).pack(side="left")
+
+        tk.Frame(painel, bg=CINZA_ESC, height=1).pack(fill="x", pady=(10, 8))
         tk.Label(painel, text="DICA", font=("Segoe UI", 8, "bold"),
                  bg=BG_CARD, fg=AMARELO).pack(anchor="w")
         tk.Label(painel,
@@ -883,6 +902,50 @@ class TrainingTab:
 
         self._frame_perguntas.bind("<Configure>", _cfg)
         canvas.bind("<Configure>", _cfg)
+
+    # ── Aba 3: Estatísticas ────────────────────────────────────────────────────
+
+    # ── Sync de aprendizado ────────────────────────────────────────────────────
+
+    def _sync_enviar(self):
+        import threading
+        from knowledge_sync import export_knowledge, upload_via_http
+        self._sv_sync_status.set("Exportando aprendizado local...")
+
+        def _run():
+            try:
+                db_path = self._root._db_path if hasattr(self._root, "_db_path") else None
+                if db_path is None:
+                    import db as _db
+                    db_path = _db._db_path()
+                zip_path = export_knowledge(db_path)
+                resultado = upload_via_http(zip_path)
+                novos = resultado.get("novos", 0) if isinstance(resultado, dict) else 0
+                total = resultado.get("total", 0) if isinstance(resultado, dict) else 0
+                self._sv_sync_status.set(f"Enviado: {novos} novo(s) — total no servidor: {total}")
+            except Exception as exc:
+                self._sv_sync_status.set(f"Erro: {exc}")
+
+        threading.Thread(target=_run, daemon=True).start()
+
+    def _sync_receber(self):
+        import threading
+        from knowledge_sync import download_from_server, import_knowledge
+        self._sv_sync_status.set("Baixando aprendizado do servidor...")
+
+        def _run():
+            try:
+                import db as _db
+                db_path = _db._db_path()
+                zip_path, meta = download_from_server()
+                novos, existentes = import_knowledge(zip_path, db_path)
+                self._sv_sync_status.set(
+                    f"Recebido: {novos} novo(s), {existentes} já existiam"
+                )
+            except Exception as exc:
+                self._sv_sync_status.set(f"Erro: {exc}")
+
+        threading.Thread(target=_run, daemon=True).start()
 
     # ── Aba 3: Estatísticas ────────────────────────────────────────────────────
 
